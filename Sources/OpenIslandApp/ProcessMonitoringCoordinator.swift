@@ -232,6 +232,10 @@ final class ProcessMonitoringCoordinator {
         observedCodexAppRunning: Bool? = nil
     ) {
         let activeProcesses = activeProcesses ?? activeAgentProcessDiscovery.discover()
+        // Detect Codex.app before synthesizing sessions. Side conversations do
+        // not currently appear in Codex's app-server or rollout records, so an
+        // app-level fallback is needed when no attributable thread is visible.
+        let isCodexAppRunning = reconcileCodexAppRunningState(observedCodexAppRunning)
 
         // Work on a local copy to avoid triggering didSet (and its queue.sync +
         // view invalidation) on every intermediate mutation.
@@ -247,9 +251,13 @@ final class ProcessMonitoringCoordinator {
             existingSessions: local.sessions,
             activeProcesses: activeProcesses
         )
-        let mergedSessions = mergedWithSyntheticCursorSessions(
+        let mergedCursorSessions = mergedWithSyntheticCursorSessions(
             existingSessions: mergedClaudeSessions,
             activeProcesses: activeProcesses
+        )
+        let mergedSessions = mergedWithSyntheticCodexDesktopSession(
+            existingSessions: mergedCursorSessions,
+            isCodexAppRunning: isCodexAppRunning
         )
         if mergedSessions != local.sessions {
             local = SessionState(sessions: mergedSessions)
@@ -259,11 +267,6 @@ final class ProcessMonitoringCoordinator {
         adoptProcessTTYsForClaudeSessions(activeProcesses: activeProcesses, sessions: &local)
         adoptProcessTTYsForCursorSessions(activeProcesses: activeProcesses, sessions: &local)
 
-        // Detect Codex.app running state BEFORE the empty-sessions early
-        // return — we need to fire the callback on a brand-new Codex.app
-        // launch even when no sessions exist yet, so the app-server
-        // coordinator can connect and report threads.
-        let isCodexAppRunning = reconcileCodexAppRunningState(observedCodexAppRunning)
         let sessions = local.sessions.filter(\.isTrackedLiveSession)
         guard !sessions.isEmpty else {
             // Flush local changes only if something actually changed.
@@ -707,6 +710,59 @@ final class ProcessMonitoringCoordinator {
 
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         return attributes?[.modificationDate] as? Date
+    }
+
+    // MARK: - Synthetic Codex Desktop session
+
+    private static let syntheticCodexDesktopSessionID = "codex-desktop:unattributed"
+
+    /// Codex side conversations currently have no independent app-server
+    /// thread or rollout file. Keep one honest app-level placeholder visible
+    /// while Codex Desktop is running and no attributable Codex session is
+    /// visible. As soon as a real session appears, the placeholder is removed.
+    func mergedWithSyntheticCodexDesktopSession(
+        existingSessions: [AgentSession],
+        isCodexAppRunning: Bool,
+        now: Date = .now
+    ) -> [AgentSession] {
+        let existingFallback = existingSessions.first(where: isSyntheticCodexDesktopSession)
+        let baseSessions = existingSessions.filter { !isSyntheticCodexDesktopSession($0) }
+        guard isCodexAppRunning else {
+            return baseSessions
+        }
+
+        let hasVisibleCodexSession = baseSessions.contains {
+            $0.tool == .codex && !$0.isDemoSession && $0.isVisibleInIsland
+        }
+        guard !hasVisibleCodexSession else {
+            return baseSessions
+        }
+        if let existingFallback {
+            return baseSessions + [existingFallback]
+        }
+
+        var fallback = AgentSession(
+            id: Self.syntheticCodexDesktopSessionID,
+            title: "Codex Desktop",
+            tool: .codex,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Codex Desktop is active.",
+            updatedAt: now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Codex.app",
+                workspaceName: "Codex",
+                paneTitle: "Codex Desktop"
+            )
+        )
+        fallback.isCodexAppSession = true
+        fallback.isProcessAlive = true
+        return baseSessions + [fallback]
+    }
+
+    func isSyntheticCodexDesktopSession(_ session: AgentSession) -> Bool {
+        session.tool == .codex && session.id == Self.syntheticCodexDesktopSessionID
     }
 
     // MARK: - Synthetic Claude sessions

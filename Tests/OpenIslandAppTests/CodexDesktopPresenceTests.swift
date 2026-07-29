@@ -47,6 +47,72 @@ struct CodexDesktopPresenceTests {
         #expect(SessionDiscoveryCoordinator.shouldSurfaceCodexRecord(active, now: now))
     }
 
+    @Test
+    func runningCodexDesktopGetsFallbackWhenNoThreadIsAttributable() {
+        let coordinator = ProcessMonitoringCoordinator()
+        let sessions = coordinator.mergedWithSyntheticCodexDesktopSession(
+            existingSessions: [],
+            isCodexAppRunning: true,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        #expect(sessions.count == 1)
+        #expect(sessions[0].title == "Codex Desktop")
+        #expect(sessions[0].isVisibleInIsland)
+        #expect(coordinator.isSyntheticCodexDesktopSession(sessions[0]))
+
+        let nextTick = coordinator.mergedWithSyntheticCodexDesktopSession(
+            existingSessions: sessions,
+            isCodexAppRunning: true,
+            now: Date(timeIntervalSince1970: 20_000)
+        )
+        #expect(nextTick == sessions)
+    }
+
+    @Test
+    func attributableCodexThreadReplacesDesktopFallback() {
+        let coordinator = ProcessMonitoringCoordinator()
+        let fallback = coordinator.mergedWithSyntheticCodexDesktopSession(
+            existingSessions: [],
+            isCodexAppRunning: true
+        )
+        var real = AgentSession(
+            id: "real-codex-thread",
+            title: "Real thread",
+            tool: .codex,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Working",
+            updatedAt: .now
+        )
+        real.isCodexAppSession = true
+        real.isProcessAlive = true
+
+        let sessions = coordinator.mergedWithSyntheticCodexDesktopSession(
+            existingSessions: fallback + [real],
+            isCodexAppRunning: true
+        )
+
+        #expect(sessions.map(\.id) == ["real-codex-thread"])
+    }
+
+    @Test
+    func desktopFallbackIsRemovedWhenCodexQuits() {
+        let coordinator = ProcessMonitoringCoordinator()
+        let fallback = coordinator.mergedWithSyntheticCodexDesktopSession(
+            existingSessions: [],
+            isCodexAppRunning: true
+        )
+
+        let sessions = coordinator.mergedWithSyntheticCodexDesktopSession(
+            existingSessions: fallback,
+            isCodexAppRunning: false
+        )
+
+        #expect(sessions.isEmpty)
+    }
+
     private func record(
         phase: SessionPhase,
         updatedAt: Date

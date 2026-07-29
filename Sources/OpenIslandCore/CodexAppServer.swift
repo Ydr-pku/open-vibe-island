@@ -67,6 +67,22 @@ public enum CodexTurnStatus: String, Codable, Sendable {
     case inProgress
 }
 
+private struct CodexThreadListResult: Decodable {
+    let threads: [CodexThread]
+
+    private enum CodingKeys: String, CodingKey {
+        case data
+        case threads
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        threads = try container.decodeIfPresent([CodexThread].self, forKey: .data)
+            ?? container.decodeIfPresent([CodexThread].self, forKey: .threads)
+            ?? []
+    }
+}
+
 // MARK: - Notifications
 
 public enum CodexAppServerNotification: Sendable {
@@ -182,18 +198,16 @@ public final class CodexAppServerClient: @unchecked Sendable {
     /// List currently loaded threads from the app-server.
     public func listLoadedThreads() async throws -> [CodexThread] {
         struct Params: Encodable {}
-        struct Result: Decodable { let threads: [CodexThread] }
         let data = try await sendRequest(method: "thread/loaded/list", params: Params())
-        let result = try JSONDecoder().decode(Result.self, from: data)
+        let result = try JSONDecoder().decode(CodexThreadListResult.self, from: data)
         return result.threads
     }
 
     /// List all threads (including not-loaded) from the app-server.
     public func listThreads(limit: Int? = nil) async throws -> [CodexThread] {
         struct Params: Encodable { let limit: Int? }
-        struct Result: Decodable { let threads: [CodexThread] }
         let data = try await sendRequest(method: "thread/list", params: Params(limit: limit))
-        let result = try JSONDecoder().decode(Result.self, from: data)
+        let result = try JSONDecoder().decode(CodexThreadListResult.self, from: data)
         return result.threads
     }
 
