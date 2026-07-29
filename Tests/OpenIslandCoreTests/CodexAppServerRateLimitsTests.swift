@@ -77,4 +77,41 @@ struct CodexAppServerRateLimitsTests {
         #expect(snapshot.windows[0].label == "5h")
         #expect(snapshot.windows[0].usedPercentage == 27)
     }
+
+    @Test
+    func decodesOfficialDailyAccountUsage() throws {
+        let data = Data(
+            """
+            {
+              "summary": {
+                "lifetimeTokens": 1279847322,
+                "peakDailyTokens": 184708462,
+                "longestRunningTurnSec": 26287,
+                "currentStreakDays": 16,
+                "longestStreakDays": 16
+              },
+              "dailyUsageBuckets": [
+                {"startDate": "2026-07-27", "tokens": 80558027},
+                {"startDate": "2026-07-28", "tokens": 184708462}
+              ]
+            }
+            """.utf8
+        )
+        let capturedAt = Date(timeIntervalSince1970: 10_000)
+
+        let snapshot = try CodexAppServerClient.decodeAccountUsageSnapshot(
+            from: data,
+            capturedAt: capturedAt
+        )
+
+        #expect(snapshot.capturedAt == capturedAt)
+        #expect(snapshot.summary.lifetimeTokens == 1_279_847_322)
+        #expect(snapshot.summary.currentStreakDays == 16)
+        #expect(
+            snapshot.dailyBuckets == [
+                CodexUsageHistoryBucket(key: "2026-07-27", tokens: 80_558_027),
+                CodexUsageHistoryBucket(key: "2026-07-28", tokens: 184_708_462),
+            ]
+        )
+    }
 }

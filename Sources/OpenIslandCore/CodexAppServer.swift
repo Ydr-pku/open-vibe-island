@@ -101,6 +101,24 @@ private struct CodexAccountRateLimitWindow: Decodable {
     let resetsAt: TimeInterval?
 }
 
+private struct CodexAccountUsageReadResult: Decodable {
+    struct Summary: Decodable {
+        let lifetimeTokens: Int64
+        let peakDailyTokens: Int64
+        let longestRunningTurnSec: Int
+        let currentStreakDays: Int
+        let longestStreakDays: Int
+    }
+
+    struct DailyBucket: Decodable {
+        let startDate: String
+        let tokens: Int64
+    }
+
+    let summary: Summary
+    let dailyUsageBuckets: [DailyBucket]
+}
+
 // MARK: - Notifications
 
 public enum CodexAppServerNotification: Sendable {
@@ -236,6 +254,33 @@ public final class CodexAppServerClient: @unchecked Sendable {
         struct Params: Encodable {}
         let data = try await sendRequest(method: "account/rateLimits/read", params: Params())
         return try Self.decodeRateLimitsSnapshot(from: data, capturedAt: .now)
+    }
+
+    /// Read account-wide daily token history from Codex Desktop.
+    public func readAccountUsage() async throws -> CodexAccountUsageSnapshot {
+        struct Params: Encodable {}
+        let data = try await sendRequest(method: "account/usage/read", params: Params())
+        return try Self.decodeAccountUsageSnapshot(from: data, capturedAt: .now)
+    }
+
+    static func decodeAccountUsageSnapshot(
+        from data: Data,
+        capturedAt: Date
+    ) throws -> CodexAccountUsageSnapshot {
+        let result = try JSONDecoder().decode(CodexAccountUsageReadResult.self, from: data)
+        return CodexAccountUsageSnapshot(
+            summary: CodexAccountUsageSummary(
+                lifetimeTokens: result.summary.lifetimeTokens,
+                peakDailyTokens: result.summary.peakDailyTokens,
+                longestRunningTurnSeconds: result.summary.longestRunningTurnSec,
+                currentStreakDays: result.summary.currentStreakDays,
+                longestStreakDays: result.summary.longestStreakDays
+            ),
+            dailyBuckets: result.dailyUsageBuckets.map {
+                CodexUsageHistoryBucket(key: $0.startDate, tokens: $0.tokens)
+            },
+            capturedAt: capturedAt
+        )
     }
 
     static func decodeRateLimitsSnapshot(

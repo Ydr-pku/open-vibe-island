@@ -25,6 +25,8 @@ final class HookInstallationCoordinator {
     var claudeStatusLineStatus: ClaudeStatusLineInstallationStatus?
     var claudeUsageSnapshot: ClaudeUsageSnapshot?
     var codexUsageSnapshot: CodexUsageSnapshot?
+    var codexAccountUsageSnapshot: CodexAccountUsageSnapshot?
+    var codexLocalUsageSnapshot: CodexLocalUsageSnapshot?
     var hooksBinaryURL: URL?
     var isCodexSetupBusy = false
     var isClaudeHookSetupBusy = false
@@ -43,6 +45,12 @@ final class HookInstallationCoordinator {
 
     @ObservationIgnored
     var codexLiveUsageProvider: (() async throws -> CodexUsageSnapshot?)?
+
+    @ObservationIgnored
+    var codexAccountUsageProvider: (() async throws -> CodexAccountUsageSnapshot)?
+
+    @ObservationIgnored
+    var onCodexUsageHistoryUpdated: (() -> Void)?
 
     @ObservationIgnored
     private let codexHookInstallationManager = CodexHookInstallationManager()
@@ -98,6 +106,9 @@ final class HookInstallationCoordinator {
 
     @ObservationIgnored
     private var codexUsageMonitorTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var codexUsageHistoryRefreshTask: Task<Void, Never>?
 
     @ObservationIgnored
     private var relativeTimestampFormatter: RelativeDateTimeFormatter {
@@ -804,6 +815,26 @@ final class HookInstallationCoordinator {
         }
     }
 
+    func refreshCodexUsageHistoryState() {
+        guard codexUsageHistoryRefreshTask == nil else { return }
+
+        codexUsageHistoryRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.codexUsageHistoryRefreshTask = nil }
+
+            async let localSnapshot = Task.detached(priority: .utility) {
+                CodexLocalUsageLoader.load()
+            }.value
+
+            if let codexAccountUsageProvider,
+               let officialSnapshot = try? await codexAccountUsageProvider() {
+                self.codexAccountUsageSnapshot = officialSnapshot
+            }
+            self.codexLocalUsageSnapshot = await localSnapshot
+            self.onCodexUsageHistoryUpdated?()
+        }
+    }
+
     // MARK: - Intent-aware helpers
 
     /// Reports whether the startup flow should auto-install hooks for the
@@ -1106,8 +1137,13 @@ final class HookInstallationCoordinator {
         codexUsageMonitorTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
+            var nextHistoryRefreshAt = Date.distantPast
             while !Task.isCancelled {
                 self.refreshCodexUsageState()
+                if Date.now >= nextHistoryRefreshAt {
+                    self.refreshCodexUsageHistoryState()
+                    nextHistoryRefreshAt = Date.now.addingTimeInterval(120)
+                }
                 try? await Task.sleep(for: .seconds(30))
             }
         }

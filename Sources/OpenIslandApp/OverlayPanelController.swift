@@ -20,6 +20,7 @@ final class OverlayPanelController {
     private static let notificationMeasuredContentPadding: CGFloat = 8
     private static let notificationEstimatedVerticalInsets: CGFloat = 36
     private static let openedEmptyStateHeight: CGFloat = 108
+    private static let usageHistoryOverviewHeight: CGFloat = 112
     private static let questionCardBaseHeight: CGFloat = 110
     private static let questionCardMaxHeight: CGFloat = 420
     // Completion card chrome breakdown (everything except the scrollable text):
@@ -508,13 +509,17 @@ final class OverlayPanelController {
         let visibleSessions = openedVisibleSessions(
             sessions: model.islandListSessions
         )
-
-        if visibleSessions.isEmpty {
-            return Self.openedEmptyStateHeight
-        }
-
         let actionableID = model.islandSurface.sessionID
         let isNotificationMode = model.notchOpenReason == .notification && actionableID != nil
+        let usageHistoryHeight: CGFloat = model.showCodexUsage
+            && model.hasCodexUsageHistory
+            && !isNotificationMode
+            ? Self.usageHistoryOverviewHeight
+            : 0
+
+        if visibleSessions.isEmpty {
+            return Self.openedEmptyStateHeight + usageHistoryHeight
+        }
 
         if isNotificationMode {
             // Use SwiftUI-measured height when available (accurate after first render).
@@ -547,7 +552,7 @@ final class OverlayPanelController {
         let listHeight = rowsHeight + spacingHeight
         // Cap to match AutoHeightScrollView's maxHeight in IslandPanelView.
         let cappedListHeight = min(listHeight, Self.maxSessionListHeight)
-        return cappedListHeight + Self.openedContentVerticalInsets
+        return cappedListHeight + Self.openedContentVerticalInsets + usageHistoryHeight
     }
 
     /// Additional height for the actionable session's inline action area.

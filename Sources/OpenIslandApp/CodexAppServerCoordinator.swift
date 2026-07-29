@@ -94,6 +94,13 @@ final class CodexAppServerCoordinator {
         return try await client.readRateLimits()
     }
 
+    func readAccountUsageSnapshot() async throws -> CodexAccountUsageSnapshot {
+        guard let client, isConnected else {
+            throw CodexAppServerError.notConnected
+        }
+        return try await client.readAccountUsage()
+    }
+
     /// Disconnect and clean up.  Called when Codex.app is no longer running.
     func disconnect() {
         connectTask?.cancel()

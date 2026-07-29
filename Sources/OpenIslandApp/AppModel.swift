@@ -91,6 +91,11 @@ final class AppModel {
     var claudeStatusLineStatus: ClaudeStatusLineInstallationStatus? { hooks.claudeStatusLineStatus }
     var claudeUsageSnapshot: ClaudeUsageSnapshot? { hooks.claudeUsageSnapshot }
     var codexUsageSnapshot: CodexUsageSnapshot? { hooks.codexUsageSnapshot }
+    var codexAccountUsageSnapshot: CodexAccountUsageSnapshot? { hooks.codexAccountUsageSnapshot }
+    var codexLocalUsageSnapshot: CodexLocalUsageSnapshot? { hooks.codexLocalUsageSnapshot }
+    var hasCodexUsageHistory: Bool {
+        codexAccountUsageSnapshot != nil || codexLocalUsageSnapshot != nil
+    }
     var hooksBinaryURL: URL? { hooks.hooksBinaryURL }
     var codexHooksInstalled: Bool { hooks.codexHooksInstalled }
     var claudeHooksInstalled: Bool { hooks.claudeHooksInstalled }
@@ -639,6 +644,9 @@ final class AppModel {
         hooks.onStatusMessage = { [weak self] message in
             self?.lastActionMessage = message
         }
+        hooks.onCodexUsageHistoryUpdated = { [weak self] in
+            self?.refreshOverlayPlacementIfVisible()
+        }
 
         discovery.syntheticClaudeSessionPrefix = Self.syntheticClaudeSessionPrefix
         discovery.onStatusMessage = { [weak self] message in
@@ -676,6 +684,7 @@ final class AppModel {
         }
         codexAppServer.onConnected = { [weak self] in
             self?.hooks.refreshCodexUsageState()
+            self?.hooks.refreshCodexUsageHistoryState()
         }
         codexAppServer.isSessionTracked = { [weak self] id in
             self?.state.session(id: id) != nil
@@ -685,6 +694,12 @@ final class AppModel {
                 throw CodexAppServerError.disconnected
             }
             return try await self.codexAppServer.readUsageSnapshot()
+        }
+        hooks.codexAccountUsageProvider = { [weak self] in
+            guard let self else {
+                throw CodexAppServerError.disconnected
+            }
+            return try await self.codexAppServer.readAccountUsageSnapshot()
         }
 
         monitoring.syntheticClaudeSessionPrefix = Self.syntheticClaudeSessionPrefix
@@ -1102,6 +1117,7 @@ final class AppModel {
             hooks.startClaudeUsageMonitoringIfNeeded()
             if showCodexUsage {
                 hooks.refreshCodexUsageState()
+                hooks.refreshCodexUsageHistoryState()
                 hooks.startCodexUsageMonitoringIfNeeded()
             }
             updateChecker.startIfNeeded()

@@ -199,6 +199,11 @@
 "island.showAll" = "显示全部 %lld 个会话";
 "island.collapseList" = "收起列表";
 "island.usageWaiting" = "等待用量数据";
+"island.usageHistory.title" = "Token 用量";
+"island.usageHistory.independentScale" = "各行独立刻度";
+"island.usageHistory.official30d" = "官方 30 天";
+"island.usageHistory.local30d" = "本机 30 天";
+"island.usageHistory.today24h" = "今日 24 时";
 
 /* Island Panel - Approval */
 "approval.toolPermissionRequested" = "请求工具权限";

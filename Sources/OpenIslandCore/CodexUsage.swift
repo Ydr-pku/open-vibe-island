@@ -59,6 +59,72 @@ public struct CodexUsageSnapshot: Equatable, Codable, Sendable {
     }
 }
 
+public struct CodexUsageHistoryBucket: Equatable, Codable, Sendable, Identifiable {
+    public var key: String
+    public var tokens: Int64
+
+    public init(key: String, tokens: Int64) {
+        self.key = key
+        self.tokens = tokens
+    }
+
+    public var id: String { key }
+}
+
+public struct CodexAccountUsageSummary: Equatable, Codable, Sendable {
+    public var lifetimeTokens: Int64
+    public var peakDailyTokens: Int64
+    public var longestRunningTurnSeconds: Int
+    public var currentStreakDays: Int
+    public var longestStreakDays: Int
+
+    public init(
+        lifetimeTokens: Int64,
+        peakDailyTokens: Int64,
+        longestRunningTurnSeconds: Int,
+        currentStreakDays: Int,
+        longestStreakDays: Int
+    ) {
+        self.lifetimeTokens = lifetimeTokens
+        self.peakDailyTokens = peakDailyTokens
+        self.longestRunningTurnSeconds = longestRunningTurnSeconds
+        self.currentStreakDays = currentStreakDays
+        self.longestStreakDays = longestStreakDays
+    }
+}
+
+public struct CodexAccountUsageSnapshot: Equatable, Codable, Sendable {
+    public var summary: CodexAccountUsageSummary
+    public var dailyBuckets: [CodexUsageHistoryBucket]
+    public var capturedAt: Date
+
+    public init(
+        summary: CodexAccountUsageSummary,
+        dailyBuckets: [CodexUsageHistoryBucket],
+        capturedAt: Date
+    ) {
+        self.summary = summary
+        self.dailyBuckets = dailyBuckets
+        self.capturedAt = capturedAt
+    }
+}
+
+public struct CodexLocalUsageSnapshot: Equatable, Codable, Sendable {
+    public var dailyBuckets: [CodexUsageHistoryBucket]
+    public var hourlyBuckets: [CodexUsageHistoryBucket]
+    public var capturedAt: Date
+
+    public init(
+        dailyBuckets: [CodexUsageHistoryBucket],
+        hourlyBuckets: [CodexUsageHistoryBucket],
+        capturedAt: Date
+    ) {
+        self.dailyBuckets = dailyBuckets
+        self.hourlyBuckets = hourlyBuckets
+        self.capturedAt = capturedAt
+    }
+}
+
 public enum CodexUsageLoader {
     public static let defaultRootURL = CodexRolloutDiscovery.defaultRootURL
 
@@ -281,5 +347,176 @@ public enum CodexUsageLoader {
         default:
             return nil
         }
+    }
+}
+
+public enum CodexLocalUsageLoader {
+    private static let streamingChunkSize = 256 * 1_024
+
+    public static func load(
+        fromRootURL rootURL: URL = CodexRolloutDiscovery.defaultRootURL,
+        now: Date = .now,
+        calendar: Calendar = .current,
+        fileManager: FileManager = .default
+    ) -> CodexLocalUsageSnapshot {
+        let today = calendar.startOfDay(for: now)
+        let firstDay = calendar.date(byAdding: .day, value: -29, to: today) ?? today
+        let candidateCutoff = firstDay.addingTimeInterval(-86_400)
+        var daily: [String: Int64] = [:]
+        var hourly: [String: Int64] = [:]
+
+        guard fileManager.fileExists(atPath: rootURL.path),
+              let enumerator = fileManager.enumerator(
+                at: rootURL,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+              ) else {
+            return CodexLocalUsageSnapshot(
+                dailyBuckets: [],
+                hourlyBuckets: [],
+                capturedAt: now
+            )
+        }
+
+        for case let fileURL as URL in enumerator {
+            guard fileURL.lastPathComponent.hasPrefix("rollout-"),
+                  fileURL.pathExtension == "jsonl",
+                  let values = try? fileURL.resourceValues(
+                    forKeys: [.contentModificationDateKey, .isRegularFileKey]
+                  ),
+                  values.isRegularFile == true,
+                  (values.contentModificationDate ?? .distantPast) >= candidateCutoff else {
+                continue
+            }
+
+            accumulate(
+                fileURL: fileURL,
+                firstDay: firstDay,
+                today: today,
+                now: now,
+                calendar: calendar,
+                daily: &daily,
+                hourly: &hourly
+            )
+        }
+
+        return CodexLocalUsageSnapshot(
+            dailyBuckets: daily
+                .map { CodexUsageHistoryBucket(key: $0.key, tokens: $0.value) }
+                .sorted { $0.key < $1.key },
+            hourlyBuckets: hourly
+                .map { CodexUsageHistoryBucket(key: $0.key, tokens: $0.value) }
+                .sorted { $0.key < $1.key },
+            capturedAt: now
+        )
+    }
+
+    private static func accumulate(
+        fileURL: URL,
+        firstDay: Date,
+        today: Date,
+        now: Date,
+        calendar: Calendar,
+        daily: inout [String: Int64],
+        hourly: inout [String: Int64]
+    ) {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
+            return
+        }
+        defer { try? handle.close() }
+
+        var buffer = Data()
+        while let chunk = try? handle.read(upToCount: streamingChunkSize),
+              !chunk.isEmpty {
+            buffer.append(chunk)
+            for line in extractCompleteLines(from: &buffer) {
+                accumulate(
+                    line: line,
+                    firstDay: firstDay,
+                    today: today,
+                    now: now,
+                    calendar: calendar,
+                    daily: &daily,
+                    hourly: &hourly
+                )
+            }
+        }
+        if !buffer.isEmpty {
+            accumulate(
+                line: String(decoding: buffer, as: UTF8.self),
+                firstDay: firstDay,
+                today: today,
+                now: now,
+                calendar: calendar,
+                daily: &daily,
+                hourly: &hourly
+            )
+        }
+    }
+
+    private static func accumulate(
+        line: String,
+        firstDay: Date,
+        today: Date,
+        now: Date,
+        calendar: Calendar,
+        daily: inout [String: Int64],
+        hourly: inout [String: Int64]
+    ) {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["type"] as? String == "event_msg",
+              let payload = object["payload"] as? [String: Any],
+              payload["type"] as? String == "token_count",
+              let info = payload["info"] as? [String: Any],
+              let lastUsage = info["last_token_usage"] as? [String: Any],
+              let tokenNumber = lastUsage["total_tokens"] as? NSNumber,
+              tokenNumber.int64Value > 0,
+              let timestampText = object["timestamp"] as? String,
+              let timestamp = isoDate(timestampText),
+              timestamp >= firstDay,
+              timestamp <= now else {
+            return
+        }
+
+        let dayKey = dayKey(for: timestamp, calendar: calendar)
+        daily[dayKey, default: 0] += tokenNumber.int64Value
+
+        if timestamp >= today {
+            let hour = calendar.component(.hour, from: timestamp)
+            let hourKey = String(format: "%02d", hour)
+            hourly[hourKey, default: 0] += tokenNumber.int64Value
+        }
+    }
+
+    private static func extractCompleteLines(from buffer: inout Data) -> [String] {
+        var lines: [String] = []
+        while let newlineIndex = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+            let lineData = buffer[..<newlineIndex]
+            buffer.removeSubrange(...newlineIndex)
+            if !lineData.isEmpty {
+                lines.append(String(decoding: lineData, as: UTF8.self))
+            }
+        }
+        return lines
+    }
+
+    private static func isoDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        return ISO8601DateFormatter().date(from: value)
+    }
+
+    private static func dayKey(for date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
     }
 }

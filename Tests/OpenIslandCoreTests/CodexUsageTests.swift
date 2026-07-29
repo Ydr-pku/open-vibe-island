@@ -187,6 +187,66 @@ struct CodexUsageTests {
 
         #expect(snapshot?.windows.map(\.label) == ["1h 30m", "1d 1h"])
     }
+
+    @Test
+    func localUsageLoaderAggregatesDailyAndCurrentDayHourlyTokens() throws {
+        let rootURL = temporaryRootURL(named: "codex-local-history")
+        let rolloutURL = rootURL.appendingPathComponent("rollout-history.jsonl")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try writeRollout(
+            [
+                rolloutLine(
+                    timestamp: "2026-07-28T03:15:00.000Z",
+                    type: "event_msg",
+                    payload: [
+                        "type": "token_count",
+                        "info": ["last_token_usage": ["total_tokens": 1_200]],
+                    ]
+                ),
+                rolloutLine(
+                    timestamp: "2026-07-29T01:10:00.000Z",
+                    type: "event_msg",
+                    payload: [
+                        "type": "token_count",
+                        "info": ["last_token_usage": ["total_tokens": 2_000]],
+                    ]
+                ),
+                rolloutLine(
+                    timestamp: "2026-07-29T01:45:00.000Z",
+                    type: "event_msg",
+                    payload: [
+                        "type": "token_count",
+                        "info": ["last_token_usage": ["total_tokens": 3_000]],
+                    ]
+                ),
+            ],
+            to: rolloutURL
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
+        let now = try #require(isoDate("2026-07-29T04:00:00.000Z"))
+        try setModificationDate(now, for: rolloutURL)
+
+        let snapshot = CodexLocalUsageLoader.load(
+            fromRootURL: rootURL,
+            now: now,
+            calendar: calendar
+        )
+
+        #expect(
+            snapshot.dailyBuckets == [
+                CodexUsageHistoryBucket(key: "2026-07-28", tokens: 1_200),
+                CodexUsageHistoryBucket(key: "2026-07-29", tokens: 5_000),
+            ]
+        )
+        #expect(
+            snapshot.hourlyBuckets == [
+                CodexUsageHistoryBucket(key: "09", tokens: 5_000),
+            ]
+        )
+    }
 }
 
 private func temporaryRootURL(named name: String) -> URL {

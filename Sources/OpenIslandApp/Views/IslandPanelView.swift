@@ -422,6 +422,13 @@ struct IslandPanelView: View {
                     .padding(.top, 8)
             }
 
+            if model.showCodexUsage,
+               model.hasCodexUsageHistory,
+               !isNotificationMode {
+                codexUsageHistoryOverview
+                    .padding(.horizontal, sessionListSideInset)
+            }
+
             if model.shouldShowSessionBootstrapPlaceholder {
                 sessionBootstrapPlaceholder
                     .padding(.horizontal, 18)
@@ -433,6 +440,7 @@ struct IslandPanelView: View {
             } else {
                 sessionList
             }
+
         }
         .padding(.bottom, 0)
     }
@@ -724,6 +732,128 @@ struct IslandPanelView: View {
                 .fill(.white.opacity(0.055))
                 .frame(height: 1)
         }
+    }
+
+    private var codexUsageHistoryOverview: some View {
+        let official = usageHistoryPoints(kind: .officialDaily)
+        let local = usageHistoryPoints(kind: .localDaily)
+        let hourly = usageHistoryPoints(kind: .localHourly)
+
+        return VStack(spacing: 5) {
+            HStack {
+                Text(lang.t("island.usageHistory.title").uppercased())
+                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .tracking(1.2)
+                    .foregroundStyle(V6Palette.paper.opacity(0.52))
+                Spacer()
+                Text(lang.t("island.usageHistory.independentScale"))
+                    .font(.system(size: 8.5, weight: .medium))
+                    .foregroundStyle(V6Palette.paper.opacity(0.26))
+            }
+
+            UsageMiniChartRow(
+                label: lang.t("island.usageHistory.official30d"),
+                points: official,
+                tint: Color(hex: AgentTool.codex.brandColorHex) ?? .blue
+            )
+            UsageMiniChartRow(
+                label: lang.t("island.usageHistory.local30d"),
+                points: local,
+                tint: .green.opacity(0.9)
+            )
+            UsageMiniChartRow(
+                label: lang.t("island.usageHistory.today24h"),
+                points: hourly,
+                tint: .orange.opacity(0.92)
+            )
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.white.opacity(0.055), lineWidth: 1)
+        }
+    }
+
+    private enum UsageHistoryKind {
+        case officialDaily
+        case localDaily
+        case localHourly
+    }
+
+    private func usageHistoryPoints(kind: UsageHistoryKind) -> [UsageHistoryPoint] {
+        let calendar = Calendar.current
+        let now = Date.now
+        let today = calendar.startOfDay(for: now)
+
+        switch kind {
+        case .officialDaily:
+            let values = Dictionary(
+                uniqueKeysWithValues: (model.codexAccountUsageSnapshot?.dailyBuckets ?? [])
+                    .map { ($0.key, $0.tokens) }
+            )
+            let firstAvailableKey = values.keys.min()
+            let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+            return (-29...0).compactMap { offset in
+                guard let date = calendar.date(byAdding: .day, value: offset, to: today) else {
+                    return nil
+                }
+                let key = Self.dayKey(for: date, calendar: calendar)
+                let isCompleteDay = date <= yesterday
+                let isCovered = firstAvailableKey.map { key >= $0 } == true && isCompleteDay
+                let tokens = values[key] ?? (isCovered ? 0 : nil)
+                return UsageHistoryPoint(
+                    id: "official-\(key)",
+                    label: key,
+                    tokens: tokens
+                )
+            }
+
+        case .localDaily:
+            let values = Dictionary(
+                uniqueKeysWithValues: (model.codexLocalUsageSnapshot?.dailyBuckets ?? [])
+                    .map { ($0.key, $0.tokens) }
+            )
+            let firstAvailableKey = values.keys.min()
+            return (-29...0).compactMap { offset in
+                guard let date = calendar.date(byAdding: .day, value: offset, to: today) else {
+                    return nil
+                }
+                let key = Self.dayKey(for: date, calendar: calendar)
+                let isCovered = firstAvailableKey.map { key >= $0 } == true
+                return UsageHistoryPoint(
+                    id: "local-\(key)",
+                    label: key,
+                    tokens: values[key] ?? (isCovered ? 0 : nil)
+                )
+            }
+
+        case .localHourly:
+            let values = Dictionary(
+                uniqueKeysWithValues: (model.codexLocalUsageSnapshot?.hourlyBuckets ?? [])
+                    .map { ($0.key, $0.tokens) }
+            )
+            let currentHour = calendar.component(.hour, from: now)
+            return (0..<24).map { hour in
+                let key = String(format: "%02d", hour)
+                return UsageHistoryPoint(
+                    id: "hour-\(key)",
+                    label: "\(key):00",
+                    tokens: hour <= currentHour ? (values[key] ?? 0) : nil
+                )
+            }
+        }
+    }
+
+    private static func dayKey(for date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
     }
 
     private func sessionOverviewItems(referenceDate: Date) -> [SessionOverviewItem] {
@@ -1118,6 +1248,98 @@ struct IslandPanelView: View {
         }
 
         return formatter.string(from: interval)
+    }
+}
+
+private struct UsageHistoryPoint: Identifiable {
+    let id: String
+    let label: String
+    let tokens: Int64?
+}
+
+private struct UsageMiniChartRow: View {
+    let label: String
+    let points: [UsageHistoryPoint]
+    let tint: Color
+
+    private var peakTokens: Int64 {
+        max(points.compactMap(\.tokens).max() ?? 0, 1)
+    }
+
+    private var totalTokens: Int64? {
+        let values = points.compactMap(\.tokens)
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +)
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Text(label)
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(V6Palette.paper.opacity(0.48))
+                .frame(width: 52, alignment: .leading)
+
+            GeometryReader { geometry in
+                let spacing: CGFloat = 2
+                let count = max(points.count, 1)
+                let barWidth = max(
+                    1,
+                    (geometry.size.width - (CGFloat(count - 1) * spacing)) / CGFloat(count)
+                )
+
+                HStack(alignment: .bottom, spacing: spacing) {
+                    ForEach(points) { point in
+                        usageBar(point, width: barWidth, availableHeight: geometry.size.height)
+                    }
+                }
+            }
+            .frame(height: 17)
+
+            Text(totalTokens.map(Self.compactTokenText) ?? "--")
+                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(tint.opacity(0.86))
+                .frame(width: 46, alignment: .trailing)
+        }
+        .frame(height: 18)
+    }
+
+    @ViewBuilder
+    private func usageBar(
+        _ point: UsageHistoryPoint,
+        width: CGFloat,
+        availableHeight: CGFloat
+    ) -> some View {
+        if let tokens = point.tokens {
+            let ratio = Double(tokens) / Double(peakTokens)
+            let height = tokens == 0 ? 1 : max(2, availableHeight * ratio)
+            RoundedRectangle(cornerRadius: min(width / 2, 1.5), style: .continuous)
+                .fill(tint.opacity(tokens == 0 ? 0.18 : 0.78))
+                .frame(width: width, height: height)
+                .help("\(point.label) · \(Self.exactTokenText(tokens))")
+        } else {
+            RoundedRectangle(cornerRadius: min(width / 2, 1.5), style: .continuous)
+                .strokeBorder(.white.opacity(0.1), lineWidth: 0.6)
+                .frame(width: width, height: 3)
+                .help("\(point.label) · No data")
+        }
+    }
+
+    private static func compactTokenText(_ tokens: Int64) -> String {
+        let value = Double(tokens)
+        switch value {
+        case 1_000_000_000...:
+            return String(format: "%.1fB", value / 1_000_000_000)
+        case 1_000_000...:
+            return String(format: "%.1fM", value / 1_000_000)
+        case 1_000...:
+            return String(format: "%.1fK", value / 1_000)
+        default:
+            return "\(tokens)"
+        }
+    }
+
+    private static func exactTokenText(_ tokens: Int64) -> String {
+        tokens.formatted(.number.grouping(.automatic)) + " tokens"
     }
 }
 
