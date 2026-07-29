@@ -9,11 +9,19 @@ This repository should use Git worktrees as the default shape for development.
 - reduce accidental interference across unrelated slices
 - keep merge and rollback boundaries obvious
 
+## Remote Roles
+
+- `origin`: `Ydr-pku/open-vibe-island`, the writable personal fork
+- `upstream`: `Octane0411/open-vibe-island`, the read-only source repository
+
+Create topic branches from `origin/main`. Fetch `upstream/main` only when
+synchronizing changes from the source repository into the personal fork.
+
 ## Roles
 
 ### 1. Integration worktree
 
-- Path: `/Users/wangruobing/Personal/open-island`
+- Path: `/Users/yudongrui/Documents/BaiduNetdisk/Code/20260729_open-vibe-island/open-vibe-island`
 - Branch: `main`
 - Purpose: fetch, mirror `main` after PR merges, and verify
 
@@ -25,7 +33,7 @@ Rules:
 
 ### 2. Topic worktrees
 
-- Path pattern: `/Users/wangruobing/Personal/open-island-<topic>`
+- Path pattern: `/Users/yudongrui/Documents/BaiduNetdisk/Code/20260729_open-vibe-island/open-vibe-island-<topic>`
 - Branch pattern: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `investigate/<topic>`
 - Purpose: isolated implementation for one slice
 
@@ -44,14 +52,14 @@ From the integration worktree:
 
 ```bash
 git fetch origin
-git worktree add /Users/wangruobing/Personal/open-island-<topic> -b <branch-name> origin/main
+git worktree add /Users/yudongrui/Documents/BaiduNetdisk/Code/20260729_open-vibe-island/open-vibe-island-<topic> -b <branch-name> origin/main
 ```
 
 Example:
 
 ```bash
 git fetch origin
-git worktree add /Users/wangruobing/Personal/open-island-island-polish -b feat/island-polish origin/main
+git worktree add /Users/yudongrui/Documents/BaiduNetdisk/Code/20260729_open-vibe-island/open-vibe-island-island-polish -b feat/island-polish origin/main
 ```
 
 ## Work inside the topic worktree
@@ -96,10 +104,28 @@ git fetch origin
 git pull --ff-only origin main
 ```
 
+## Synchronize From Upstream
+
+Synchronize the personal fork through a topic branch and PR so upstream changes
+receive the same review and verification as other integration work:
+
+```bash
+git fetch upstream
+git worktree add /Users/yudongrui/Documents/BaiduNetdisk/Code/20260729_open-vibe-island/open-vibe-island-sync-upstream \
+  -b chore/sync-upstream origin/main
+cd /Users/yudongrui/Documents/BaiduNetdisk/Code/20260729_open-vibe-island/open-vibe-island-sync-upstream
+git merge upstream/main
+```
+
+Resolve and verify any conflicts in that worktree, commit the merge when
+necessary, then push the branch to `origin` and open a PR targeting `main`.
+Never push to `upstream`.
+
 ## Push policy
 
 - Push topic branches when you want backup, review, or collaboration.
 - Do not push `main` directly. Merge through PRs, then update the integration worktree with `git pull --ff-only`.
+- Never push to `upstream`; it is the read-only source repository.
 - Tooling defaults do not override this policy; for example, a publish helper that defaults to draft PRs must still follow the repository default above.
 
 ## Cleanup
@@ -107,7 +133,7 @@ git pull --ff-only origin main
 After the topic branch is merged:
 
 ```bash
-git worktree remove /Users/wangruobing/Personal/open-island-<topic>
+git worktree remove /Users/yudongrui/Documents/BaiduNetdisk/Code/20260729_open-vibe-island/open-vibe-island-<topic>
 git branch -d <branch-name>
 ```
 
@@ -120,7 +146,7 @@ git push origin --delete <branch-name>
 ## Recommended Conventions
 
 - Keep topic names short and concrete: `codex-hooks-noise`, `island-geometry`, `claude-usage`.
-- Prefer sibling directories under `/Users/wangruobing/Personal/` so all worktrees stay easy to discover.
+- Prefer sibling directories under `/Users/yudongrui/Documents/BaiduNetdisk/Code/20260729_open-vibe-island/` so all worktrees stay easy to discover.
 - Do not leave long-lived unmerged worktrees drifting far away from `origin/main`.
 - If a worktree becomes exploratory rather than shippable, rename the branch into `investigate/<topic>` or close it.
 - When assigning work to multiple agents, split by file ownership or subsystem, not by vague goal.
