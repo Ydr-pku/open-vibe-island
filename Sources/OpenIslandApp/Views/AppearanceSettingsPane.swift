@@ -1420,8 +1420,8 @@ private struct UsageDisplayPreview: View {
     var body: some View {
         HStack(spacing: 6) {
             if option == .compact {
-                usageChip("Cl", window: "5h", value: 42, color: Color(hex: AgentTool.claudeCode.brandColorHex) ?? .orange)
-                usageChip("Cx", window: "7d", value: 13, color: Color(hex: AgentTool.codex.brandColorHex) ?? .blue)
+                usageChip("Cl", window: "5h", quota: 58, time: 42, color: Color(hex: AgentTool.claudeCode.brandColorHex) ?? .orange)
+                usageChip("Cx", window: "7d", quota: 87, time: 13, color: Color(hex: AgentTool.codex.brandColorHex) ?? .blue)
             } else {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(V6Palette.paper.opacity(0.18))
@@ -1431,7 +1431,13 @@ private struct UsageDisplayPreview: View {
         .frame(width: 104, alignment: .center)
     }
 
-    private func usageChip(_ title: String, window: String, value: Int, color: Color) -> some View {
+    private func usageChip(
+        _ title: String,
+        window: String,
+        quota: Int,
+        time: Int,
+        color: Color
+    ) -> some View {
         HStack(spacing: 4) {
             Text(title)
                 .font(.system(size: 9.5, weight: .semibold))
@@ -1439,9 +1445,12 @@ private struct UsageDisplayPreview: View {
             Text(window)
                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                 .foregroundStyle(V6Palette.paper.opacity(0.42))
-            Text("\(value)%")
+            Text("Q\(quota)%")
                 .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                 .foregroundStyle(color)
+            Text("T\(time)%")
+                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(V6Palette.paper.opacity(0.62))
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)

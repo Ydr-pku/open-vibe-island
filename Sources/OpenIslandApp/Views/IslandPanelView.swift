@@ -875,6 +875,7 @@ struct IslandPanelView: View {
                         id: "claude-5h",
                         label: "5h",
                         usedPercentage: fiveHour.usedPercentage,
+                        windowMinutes: 5 * 60,
                         resetsAt: fiveHour.resetsAt
                     )
                 )
@@ -886,6 +887,7 @@ struct IslandPanelView: View {
                         id: "claude-7d",
                         label: "7d",
                         usedPercentage: sevenDay.usedPercentage,
+                        windowMinutes: 7 * 24 * 60,
                         resetsAt: sevenDay.resetsAt
                     )
                 )
@@ -910,6 +912,7 @@ struct IslandPanelView: View {
                     id: "codex-\(window.key)",
                     label: window.label,
                     usedPercentage: window.usedPercentage,
+                    windowMinutes: window.windowMinutes,
                     resetsAt: window.resetsAt
                 )
             }
@@ -1040,9 +1043,13 @@ struct IslandPanelView: View {
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.42))
 
-            Text("\(provider.peakUsagePercentage)%")
+            Text("Q \(provider.peakRemainingQuotaPercentage)%")
                 .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                .foregroundStyle(usageColor(for: provider.peakUsedPercentage))
+                .foregroundStyle(remainingQuotaColor(for: provider.peakRemainingQuotaPercentage))
+
+            Text("T \(provider.peakResetTimeRemainingText)")
+                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.68))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -1056,7 +1063,11 @@ struct IslandPanelView: View {
 
     private func usageHelpText(for provider: UsageProviderPresentation) -> String {
         provider.windows.map { window in
-            var parts = ["\(window.label) \(window.roundedUsedPercentage)%"]
+            var parts = [
+                "\(window.label)",
+                "quota \(window.roundedRemainingQuotaPercentage)%",
+                "reset \(window.resetTimeRemainingText)"
+            ]
             if let resetsAt = window.resetsAt,
                let remaining = remainingDurationString(until: resetsAt) {
                 parts.append(remaining)
@@ -1075,11 +1086,11 @@ struct IslandPanelView: View {
             .background(.white.opacity(0.08), in: Capsule())
     }
 
-    private func usageColor(for percentage: Double) -> Color {
+    private func remainingQuotaColor(for percentage: Int) -> Color {
         switch percentage {
-        case 90...:
+        case ...10:
             .red.opacity(0.95)
-        case 70..<90:
+        case 11...30:
             .orange.opacity(0.95)
         default:
             .green.opacity(0.95)
@@ -1125,12 +1136,12 @@ private struct UsageProviderPresentation: Identifiable {
         peakWindow?.label ?? ""
     }
 
-    var peakUsedPercentage: Double {
-        peakWindow?.usedPercentage ?? 0
+    var peakRemainingQuotaPercentage: Int {
+        peakWindow?.roundedRemainingQuotaPercentage ?? 0
     }
 
-    var peakUsagePercentage: Int {
-        peakWindow?.roundedUsedPercentage ?? 0
+    var peakResetTimeRemainingText: String {
+        peakWindow?.resetTimeRemainingText ?? "--%"
     }
 
     var shortTitle: String {
@@ -1149,10 +1160,21 @@ private struct UsageWindowPresentation: Identifiable {
     let id: String
     let label: String
     let usedPercentage: Double
+    let windowMinutes: Int
     let resetsAt: Date?
 
-    var roundedUsedPercentage: Int {
-        Int(usedPercentage.rounded())
+    var roundedRemainingQuotaPercentage: Int {
+        UsagePercentage.remainingQuota(usedPercentage: usedPercentage)
+    }
+
+    var resetTimeRemainingText: String {
+        guard let percentage = UsagePercentage.resetTimeRemaining(
+            resetsAt: resetsAt,
+            windowMinutes: windowMinutes
+        ) else {
+            return "--%"
+        }
+        return "\(percentage)%"
     }
 }
 
