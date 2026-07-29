@@ -117,6 +117,9 @@ extension AgentSession {
     var spotlightWorkspaceName: String {
         if let workspaceName = jumpTarget?.workspaceName.trimmedForSurface,
            !workspaceName.isEmpty {
+            if tool == .codex {
+                return CodexSessionPresentationSanitizer.workspaceName(workspaceName) ?? "Codex"
+            }
             return workspaceName
         }
 
@@ -418,7 +421,7 @@ extension AgentSession {
     }
 
     private var initialPromptText: String? {
-        let prompt = initialUserPromptText?.trimmedForSurface
+        let prompt = presentationPrompt(initialUserPromptText)
         guard let prompt, !prompt.isEmpty else {
             return nil
         }
@@ -427,12 +430,19 @@ extension AgentSession {
     }
 
     private var latestPromptText: String? {
-        let prompt = latestUserPromptText?.trimmedForSurface
+        let prompt = presentationPrompt(latestUserPromptText)
         guard let prompt, !prompt.isEmpty else {
             return nil
         }
 
         return prompt
+    }
+
+    private func presentationPrompt(_ prompt: String?) -> String? {
+        if tool == .codex {
+            return CodexSessionPresentationSanitizer.prompt(prompt)
+        }
+        return prompt?.trimmedForSurface
     }
 
     private var prefersLivePromptHeadline: Bool {

@@ -241,9 +241,11 @@ final class CodexAppServerCoordinator {
     // MARK: - Helpers
 
     private func emitSessionStarted(from thread: CodexThread) {
-        let workspaceName = URL(fileURLWithPath: thread.cwd).lastPathComponent
-        let title = thread.name ?? workspaceName
-        let summary = thread.preview.isEmpty ? "Codex session." : String(thread.preview.prefix(120))
+        let workspaceName = Self.displayWorkspaceName(for: thread.cwd)
+        let threadName = thread.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = threadName.flatMap { $0.isEmpty ? nil : $0 } ?? workspaceName
+        let prompt = CodexSessionPresentationSanitizer.prompt(thread.preview)
+        let summary = prompt.map { String($0.prefix(120)) } ?? "Codex session."
 
         let phase: SessionPhase
         switch thread.status.type {
@@ -270,9 +272,27 @@ final class CodexAppServerCoordinator {
                 ),
                 codexMetadata: CodexSessionMetadata(
                     transcriptPath: thread.path,
-                    initialUserPrompt: thread.preview.isEmpty ? nil : thread.preview
+                    initialUserPrompt: prompt
                 )
             )
         ))
+    }
+
+    /// Produces a stable project label for Codex Desktop threads. Foundation
+    /// reports `/` as the last path component of the filesystem root, which
+    /// previously leaked into headlines such as `/ · <recommended_plugins>`.
+    static func displayWorkspaceName(for cwd: String) -> String {
+        let trimmedCWD = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCWD.isEmpty else {
+            return "Codex"
+        }
+
+        let standardizedPath = URL(fileURLWithPath: trimmedCWD).standardizedFileURL.path
+        guard standardizedPath != "/" else {
+            return "Codex"
+        }
+
+        let workspaceName = WorkspaceNameResolver.workspaceName(for: trimmedCWD)
+        return workspaceName == "Workspace" ? "Codex" : workspaceName
     }
 }
