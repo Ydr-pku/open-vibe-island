@@ -48,8 +48,12 @@ final class ProcessMonitoringCoordinator {
     @ObservationIgnored
     private var wasCodexAppRunning = false
 
+    @ObservationIgnored
+    private var lastCodexAppSeenAt: Date?
+
     private static let startupPollInterval: TimeInterval = 2
     private static let codexAppRunningProbeInterval: TimeInterval = 2
+    private static let codexAppExitGraceInterval: TimeInterval = 15
     private static let activePollInterval: TimeInterval = 60
     private static let idlePollInterval: TimeInterval = 300
     private static let cursorStalenessTimeout: TimeInterval = 600  // 10 minutes
@@ -187,12 +191,35 @@ final class ProcessMonitoringCoordinator {
 
     @discardableResult
     private func reconcileCodexAppRunningState(_ observedCodexAppRunning: Bool? = nil) -> Bool {
-        let isCodexAppRunning = observedCodexAppRunning ?? Self.isCodexDesktopAppRunning()
+        let now = Date.now
+        let observedRunning = observedCodexAppRunning ?? Self.isCodexDesktopAppRunning()
+        if observedRunning {
+            lastCodexAppSeenAt = now
+        }
+        let isCodexAppRunning = Self.debouncedCodexAppRunningState(
+            observedRunning: observedRunning,
+            lastSeenAt: lastCodexAppSeenAt,
+            now: now
+        )
         if isCodexAppRunning != wasCodexAppRunning {
             wasCodexAppRunning = isCodexAppRunning
             onCodexAppRunningChanged?(isCodexAppRunning)
         }
         return isCodexAppRunning
+    }
+
+    static func debouncedCodexAppRunningState(
+        observedRunning: Bool,
+        lastSeenAt: Date?,
+        now: Date
+    ) -> Bool {
+        if observedRunning {
+            return true
+        }
+        guard let lastSeenAt else {
+            return false
+        }
+        return now.timeIntervalSince(lastSeenAt) < codexAppExitGraceInterval
     }
 
     // MARK: - Reconciliation
@@ -1277,9 +1304,18 @@ final class ProcessMonitoringCoordinator {
     /// app launch / conversation switch), which would cause Open Island
     /// to incorrectly kill visible Codex sessions.
     static func isCodexDesktopAppRunning() -> Bool {
-        NSWorkspace.shared.runningApplications.contains { app in
+        if NSWorkspace.shared.runningApplications.contains(where: { app in
             app.bundleIdentifier == "com.openai.codex"
+        }) {
+            return true
         }
+
+        // The workspace-wide list and the bundle-specific lookup have both
+        // been observed to miss Codex transiently, but not always on the same
+        // probe. Treat either source as authoritative for presence.
+        return !NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.openai.codex"
+        ).isEmpty
     }
 
     /// Check whether the Claude desktop app is currently running.  Uses

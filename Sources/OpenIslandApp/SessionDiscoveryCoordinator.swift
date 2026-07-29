@@ -5,6 +5,7 @@ import OpenIslandCore
 @MainActor
 @Observable
 final class SessionDiscoveryCoordinator {
+    private nonisolated static let codexCompletedSessionFreshness: TimeInterval = 10 * 60
 
     /// Raw I/O results collected off the main thread during startup.
     struct StartupDiscoveryPayload: Sendable {
@@ -87,7 +88,11 @@ final class SessionDiscoveryCoordinator {
         let cutoff = Date.now.addingTimeInterval(-86_400)
 
         let allCodex = (try? codexSessionStore.load()) ?? []
-        let codexRecords = allCodex.filter { $0.updatedAt >= cutoff && $0.shouldRestoreToLiveState }
+        let codexRecords = allCodex.filter {
+            $0.updatedAt >= cutoff
+                && $0.shouldRestoreToLiveState
+                && Self.shouldSurfaceCodexRecord($0)
+        }
 
         let allClaude = (try? claudeSessionRegistry.load()) ?? []
         let claudeRecords = allClaude.filter { $0.updatedAt >= cutoff && $0.shouldRestoreToLiveState }
@@ -98,7 +103,9 @@ final class SessionDiscoveryCoordinator {
         let allCursor = (try? cursorSessionRegistry.load()) ?? []
         let cursorRecords = allCursor.filter { $0.updatedAt >= cutoff && $0.shouldRestoreToLiveState }
 
-        let discoveredCodex = codexRolloutDiscovery.discoverRecentSessions()
+        let discoveredCodex = codexRolloutDiscovery.discoverRecentSessions().filter {
+            Self.shouldSurfaceCodexRecord($0)
+        }
         let discoveredClaude = claudeTranscriptDiscovery.discoverRecentSessions()
 
         return StartupDiscoveryPayload(
@@ -436,7 +443,8 @@ final class SessionDiscoveryCoordinator {
         let existingPaths = Set(state.sessions.compactMap(\.codexMetadata?.transcriptPath))
 
         let newRecords = records.filter { record in
-            !existingIDs.contains(record.sessionID)
+            Self.shouldSurfaceCodexRecord(record)
+                && !existingIDs.contains(record.sessionID)
                 && (record.codexMetadata?.transcriptPath).map { !existingPaths.contains($0) } ?? true
         }
         guard !newRecords.isEmpty else { return }
@@ -468,6 +476,16 @@ final class SessionDiscoveryCoordinator {
         refreshCodexRolloutTracking()
         scheduleCodexSessionPersistence()
         onStatusMessage?("Discovered \(newRecords.count) new Codex.app session(s) via rollout re-scan.")
+    }
+
+    nonisolated static func shouldSurfaceCodexRecord(
+        _ record: CodexTrackedSessionRecord,
+        now: Date = .now
+    ) -> Bool {
+        if record.phase != .completed {
+            return true
+        }
+        return now.timeIntervalSince(record.updatedAt) <= codexCompletedSessionFreshness
     }
 
     // MARK: - Persistence scheduling
