@@ -31,6 +31,11 @@ final class CodexAppServerCoordinator {
     @ObservationIgnored
     var isSessionTracked: ((String) -> Bool)?
 
+    /// Called after the client is ready so account usage can refresh
+    /// immediately instead of waiting for the polling interval.
+    @ObservationIgnored
+    var onConnected: (() -> Void)?
+
     private(set) var isConnected = false
 
     // MARK: - Public API
@@ -71,6 +76,7 @@ final class CodexAppServerCoordinator {
                 self.connectTask = nil
 
                 self.onStatusMessage?("Connected to Codex app-server.")
+                self.onConnected?()
 
                 // Fetch currently loaded threads and create sessions.
                 await self.syncLoadedThreads()
@@ -79,6 +85,13 @@ final class CodexAppServerCoordinator {
                 self.onStatusMessage?("Failed to connect to Codex app-server: \(error.localizedDescription)")
             }
         }
+    }
+
+    func readUsageSnapshot() async throws -> CodexUsageSnapshot? {
+        guard let client, isConnected else {
+            throw CodexAppServerError.notConnected
+        }
+        return try await client.readRateLimits()
     }
 
     /// Disconnect and clean up.  Called when Codex.app is no longer running.

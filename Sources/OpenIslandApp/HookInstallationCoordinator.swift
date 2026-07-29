@@ -42,6 +42,9 @@ final class HookInstallationCoordinator {
     var onStatusMessage: ((String) -> Void)?
 
     @ObservationIgnored
+    var codexLiveUsageProvider: (() async throws -> CodexUsageSnapshot?)?
+
+    @ObservationIgnored
     private let codexHookInstallationManager = CodexHookInstallationManager()
 
     /// Computed so it always reflects the latest `ClaudeConfigDirectory` setting.
@@ -255,10 +258,13 @@ final class HookInstallationCoordinator {
 
     var codexUsageStatusSummary: String {
         if let summary = codexUsageSummaryText {
-            return "Reading the latest local rollout token_count snapshots · \(summary)"
+            if codexUsageSnapshot?.sourceFilePath == CodexAppServerClient.rateLimitsSourceIdentifier {
+                return "Reading live account rate limits from Codex · \(summary)"
+            }
+            return "Using the latest local rollout rate limits as a fallback · \(summary)"
         }
 
-        return "Passively reading ~/.codex/sessions/**/rollout-*.jsonl and extracting token_count.rate_limits."
+        return "Waiting for live Codex account rate limits."
     }
 
     var codexUsageSummaryText: String? {
@@ -775,6 +781,18 @@ final class HookInstallationCoordinator {
         Task { [weak self] in
             guard let self else { return }
 
+            if let codexLiveUsageProvider {
+                do {
+                    if let snapshot = try await codexLiveUsageProvider() {
+                        self.codexUsageSnapshot = snapshot
+                        return
+                    }
+                } catch {
+                    // Codex Desktop may be closed or still connecting. Fall
+                    // back to the latest local snapshot below.
+                }
+            }
+
             do {
                 let snapshot = try await Task.detached(priority: .utility) {
                     try CodexUsageLoader.load()
@@ -1090,7 +1108,7 @@ final class HookInstallationCoordinator {
 
             while !Task.isCancelled {
                 self.refreshCodexUsageState()
-                try? await Task.sleep(for: .seconds(120))
+                try? await Task.sleep(for: .seconds(30))
             }
         }
     }

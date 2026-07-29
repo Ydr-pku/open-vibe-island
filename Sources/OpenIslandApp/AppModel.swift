@@ -674,8 +674,17 @@ final class AppModel {
         codexAppServer.onStatusMessage = { [weak self] message in
             self?.lastActionMessage = message
         }
+        codexAppServer.onConnected = { [weak self] in
+            self?.hooks.refreshCodexUsageState()
+        }
         codexAppServer.isSessionTracked = { [weak self] id in
             self?.state.session(id: id) != nil
+        }
+        hooks.codexLiveUsageProvider = { [weak self] in
+            guard let self else {
+                throw CodexAppServerError.disconnected
+            }
+            return try await self.codexAppServer.readUsageSnapshot()
         }
 
         monitoring.syntheticClaudeSessionPrefix = Self.syntheticClaudeSessionPrefix

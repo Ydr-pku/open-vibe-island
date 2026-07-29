@@ -83,6 +83,24 @@ private struct CodexThreadListResult: Decodable {
     }
 }
 
+private struct CodexRateLimitsReadResult: Decodable {
+    let rateLimits: CodexAccountRateLimits?
+    let rateLimitsByLimitId: [String: CodexAccountRateLimits]?
+}
+
+private struct CodexAccountRateLimits: Decodable {
+    let limitId: String?
+    let primary: CodexAccountRateLimitWindow?
+    let secondary: CodexAccountRateLimitWindow?
+    let planType: String?
+}
+
+private struct CodexAccountRateLimitWindow: Decodable {
+    let usedPercent: Double
+    let windowDurationMins: Int
+    let resetsAt: TimeInterval?
+}
+
 // MARK: - Notifications
 
 public enum CodexAppServerNotification: Sendable {
@@ -101,6 +119,8 @@ public enum CodexAppServerNotification: Sendable {
 /// over a stdio-based `Process`.  Uses newline-delimited JSON messages
 /// (one JSON object per line, no Content-Length framing).
 public final class CodexAppServerClient: @unchecked Sendable {
+    public static let rateLimitsSourceIdentifier = "codex-app-server://account/rateLimits/read"
+
     private let codexPath: String
     private var process: Process?
     /// Internal access so tests can inject a discard `Pipe` and drive
@@ -209,6 +229,51 @@ public final class CodexAppServerClient: @unchecked Sendable {
         let data = try await sendRequest(method: "thread/list", params: Params(limit: limit))
         let result = try JSONDecoder().decode(CodexThreadListResult.self, from: data)
         return result.threads
+    }
+
+    /// Read the same account-level rate-limit snapshot used by Codex Desktop.
+    public func readRateLimits() async throws -> CodexUsageSnapshot? {
+        struct Params: Encodable {}
+        let data = try await sendRequest(method: "account/rateLimits/read", params: Params())
+        return try Self.decodeRateLimitsSnapshot(from: data, capturedAt: .now)
+    }
+
+    static func decodeRateLimitsSnapshot(
+        from data: Data,
+        capturedAt: Date
+    ) throws -> CodexUsageSnapshot? {
+        let result = try JSONDecoder().decode(CodexRateLimitsReadResult.self, from: data)
+        let rateLimits = result.rateLimits ?? result.rateLimitsByLimitId?["codex"]
+        guard let rateLimits else {
+            return nil
+        }
+
+        let keyedWindows: [(String, CodexAccountRateLimitWindow?)] = [
+            ("primary", rateLimits.primary),
+            ("secondary", rateLimits.secondary),
+        ]
+        let windows = keyedWindows.compactMap { key, window -> CodexUsageWindow? in
+            guard let window else { return nil }
+            return CodexUsageWindow(
+                key: key,
+                label: CodexUsageLoader.windowLabel(forMinutes: window.windowDurationMins),
+                usedPercentage: window.usedPercent,
+                leftPercentage: max(0, 100 - window.usedPercent),
+                windowMinutes: window.windowDurationMins,
+                resetsAt: window.resetsAt.map(Date.init(timeIntervalSince1970:))
+            )
+        }
+        guard !windows.isEmpty else {
+            return nil
+        }
+
+        return CodexUsageSnapshot(
+            sourceFilePath: rateLimitsSourceIdentifier,
+            capturedAt: capturedAt,
+            planType: rateLimits.planType,
+            limitID: rateLimits.limitId,
+            windows: windows
+        )
     }
 
     // MARK: - JSON-RPC transport

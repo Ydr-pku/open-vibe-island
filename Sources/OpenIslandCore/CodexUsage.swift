@@ -190,7 +190,7 @@ public enum CodexUsageLoader {
         )
     }
 
-    private static func windowLabel(forMinutes minutes: Int) -> String {
+    static func windowLabel(forMinutes minutes: Int) -> String {
         let days = minutes / 1_440
         let remainingMinutesAfterDays = minutes % 1_440
         let hours = remainingMinutesAfterDays / 60
