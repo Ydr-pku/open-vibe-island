@@ -200,7 +200,6 @@
 "island.collapseList" = "Collapse list";
 "island.usageWaiting" = "Usage waiting";
 "island.usageHistory.title" = "Token usage";
-"island.usageHistory.independentScale" = "independent scale";
 "island.usageHistory.official30d" = "Official 30d";
 "island.usageHistory.local30d" = "Local 30d";
 "island.usageHistory.today24h" = "Today 24h";

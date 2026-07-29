@@ -746,9 +746,10 @@ struct IslandPanelView: View {
                     .tracking(1.2)
                     .foregroundStyle(V6Palette.paper.opacity(0.52))
                 Spacer()
-                Text(lang.t("island.usageHistory.independentScale"))
+                Text("tot/max")
                     .font(.system(size: 8.5, weight: .medium))
                     .foregroundStyle(V6Palette.paper.opacity(0.26))
+                    .frame(width: 82, alignment: .trailing)
             }
 
             UsageMiniChartRow(
@@ -1272,6 +1273,17 @@ private struct UsageMiniChartRow: View {
         return values.reduce(0, +)
     }
 
+    private var maximumTokens: Int64? {
+        points.compactMap(\.tokens).max()
+    }
+
+    private var totalAndMaximumText: String {
+        guard let totalTokens, let maximumTokens else {
+            return "--/--"
+        }
+        return "\(Self.compactTokenText(totalTokens))/\(Self.compactTokenText(maximumTokens))"
+    }
+
     var body: some View {
         HStack(spacing: 7) {
             Text(label)
@@ -1295,10 +1307,10 @@ private struct UsageMiniChartRow: View {
             }
             .frame(height: 17)
 
-            Text(totalTokens.map(Self.compactTokenText) ?? "--")
+            Text(totalAndMaximumText)
                 .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                 .foregroundStyle(tint.opacity(0.86))
-                .frame(width: 46, alignment: .trailing)
+                .frame(width: 82, alignment: .trailing)
         }
         .frame(height: 18)
     }
