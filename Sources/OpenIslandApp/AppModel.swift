@@ -907,6 +907,10 @@ final class AppModel {
     /// preference and current live state. Returns nil when the preference
     /// is `.none` or there's nothing meaningful to show.
     func islandClosedRightSlotContent() -> IslandRightSlotContent? {
+        if let officialRemainingQuotaPercentage {
+            return .usage(officialRemainingQuotaPercentage)
+        }
+
         let sessions = surfacedSessions
         switch islandRightSlot {
         case .none:
@@ -939,6 +943,18 @@ final class AppModel {
             }
             return cells.isEmpty ? nil : .agents(cells)
         }
+    }
+
+    private var officialRemainingQuotaPercentage: Int? {
+        guard codexUsageSnapshot?.sourceFilePath
+                == CodexAppServerClient.rateLimitsSourceIdentifier else {
+            return nil
+        }
+
+        return codexUsageSnapshot?.windows
+            .map(\.leftPercentage)
+            .min()
+            .map { Int(min(max($0, 0), 100).rounded()) }
     }
 
     private func stampAgentsGridObservationTickets(for sessions: [AgentSession]) {

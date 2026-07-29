@@ -24,6 +24,7 @@ enum AgentGridCell: Equatable {
 enum IslandRightSlotContent: Equatable {
     case count(Int)              // "×N" badge
     case agents([AgentGridCell]) // balanced grid, one tile per session
+    case usage(Int)              // official account quota remaining
 }
 
 // MARK: - Right-slot renderers
@@ -41,6 +42,12 @@ struct V6RightSlotView: View {
                 .foregroundStyle(V6Palette.paper.opacity(0.72))
         case .agents(let cells):
             AgentsGridBody(cells: cells)
+        case .usage(let remainingPercentage):
+            Text("\(remainingPercentage)%")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .foregroundStyle(remainingQuotaColor(remainingPercentage))
         }
     }
 
@@ -61,6 +68,20 @@ struct V6RightSlotView: View {
             let maxRow = rows.max() ?? 0
             let geom = cellGeometry(rowCount: rows.count)
             return CGFloat(maxRow) * geom.cell + CGFloat(max(0, maxRow - 1)) * geom.gap
+        case .usage(let remainingPercentage):
+            let digits = Double(max(1, String(remainingPercentage).count))
+            return CGFloat(14.4 + digits * 7.2)
+        }
+    }
+
+    private func remainingQuotaColor(_ percentage: Int) -> Color {
+        switch percentage {
+        case ...10:
+            .red.opacity(0.95)
+        case 11...30:
+            .orange.opacity(0.95)
+        default:
+            .green.opacity(0.95)
         }
     }
 
@@ -318,11 +339,13 @@ enum V6ClosedLayout: Equatable {
 private enum RightSlotKey: Hashable {
     case count(Int)
     case agents(Int)
+    case usage(Int)
 
     init(_ content: IslandRightSlotContent) {
         switch content {
         case .count(let n):    self = .count(n)
         case .agents(let cs):  self = .agents(cs.count)
+        case .usage(let value): self = .usage(value)
         }
     }
 }

@@ -6,6 +6,40 @@ import OpenIslandCore
 
 @MainActor
 struct AgentsGridRightSlotTests {
+    @Test
+    func liveOfficialQuotaOverridesConfiguredTaskRightSlot() {
+        let model = AppModel()
+        model.islandRightSlot = .agents
+        model.hooks.codexUsageSnapshot = CodexUsageSnapshot(
+            sourceFilePath: CodexAppServerClient.rateLimitsSourceIdentifier,
+            capturedAt: .now,
+            windows: [
+                CodexUsageWindow(
+                    key: "primary",
+                    label: "5h",
+                    usedPercentage: 27,
+                    leftPercentage: 73,
+                    windowMinutes: 300,
+                    resetsAt: nil
+                ),
+                CodexUsageWindow(
+                    key: "secondary",
+                    label: "7d",
+                    usedPercentage: 88,
+                    leftPercentage: 12,
+                    windowMinutes: 10_080,
+                    resetsAt: nil
+                ),
+            ]
+        )
+
+        guard case let .usage(remaining)? = model.islandClosedRightSlotContent() else {
+            Issue.record("Expected official usage right-slot content")
+            return
+        }
+        #expect(remaining == 12)
+    }
+
     /// At bulk first observation (e.g. app launch) ties are broken by
     /// session.firstSeenAt so historical order is preserved.
     @Test
