@@ -5,6 +5,73 @@ import Testing
 
 /// Regression coverage for core session lifecycle and visibility behavior.
 struct SessionStateTests {
+    @Test
+    func codexDesktopSessionSurvivesOneTransientAppDetectionMiss() {
+        var session = AgentSession(
+            id: "codex-desktop-1",
+            title: "Codex",
+            tool: .codex,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Working",
+            updatedAt: Date(timeIntervalSince1970: 1_000),
+            jumpTarget: JumpTarget(
+                terminalApp: "Codex.app",
+                workspaceName: "Codex",
+                paneTitle: "Codex",
+                workingDirectory: "/",
+                codexThreadID: "codex-desktop-1"
+            )
+        )
+        session.isCodexAppSession = true
+        session.isProcessAlive = true
+        var state = SessionState(sessions: [session])
+
+        state.markProcessLiveness(aliveSessionIDs: [], isCodexAppRunning: false)
+        #expect(state.session(id: session.id)?.isProcessAlive == true)
+        #expect(state.session(id: session.id)?.processNotSeenCount == 1)
+        #expect(state.session(id: session.id)?.isVisibleInIsland == true)
+
+        state.markProcessLiveness(
+            aliveSessionIDs: [session.id],
+            isCodexAppRunning: true
+        )
+        #expect(state.session(id: session.id)?.isProcessAlive == true)
+        #expect(state.session(id: session.id)?.processNotSeenCount == 0)
+    }
+
+    @Test
+    func codexDesktopSessionExpiresAfterTwoConsecutiveDetectionMisses() {
+        var session = AgentSession(
+            id: "codex-desktop-1",
+            title: "Codex",
+            tool: .codex,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Working",
+            updatedAt: Date(timeIntervalSince1970: 1_000),
+            jumpTarget: JumpTarget(
+                terminalApp: "Codex.app",
+                workspaceName: "Codex",
+                paneTitle: "Codex",
+                workingDirectory: "/",
+                codexThreadID: "codex-desktop-1"
+            )
+        )
+        session.isCodexAppSession = true
+        session.isProcessAlive = true
+        var state = SessionState(sessions: [session])
+
+        state.markProcessLiveness(aliveSessionIDs: [], isCodexAppRunning: false)
+        state.markProcessLiveness(aliveSessionIDs: [], isCodexAppRunning: false)
+
+        #expect(state.session(id: session.id)?.isProcessAlive == false)
+        #expect(state.session(id: session.id)?.processNotSeenCount == 2)
+        #expect(state.session(id: session.id)?.isVisibleInIsland == false)
+    }
+
     /// Completed Codex CLI sessions outside Codex.app should age out even while Codex.app is running.
     @Test
     func completedCodexCLISessionEndsEvenWhenCodexAppIsRunning() {

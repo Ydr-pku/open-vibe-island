@@ -174,11 +174,11 @@
 "settings.update.available" = "v%@ 可更新 — 点击更新";
 
 /* Island Panel - Bootstrap */
-"island.checkingTerminals" = "正在检查打开的终端会话";
-"island.terminalOwnership" = "Open Island 将在确认终端归属后显示实时代理";
-"island.noTerminals" = "没有打开的终端会话";
-"island.startAgent" = "在终端中启动编码代理";
-"island.recentSessions" = "最近的会话将保留在这里，直到终端重新打开";
+"island.checkingTerminals" = "正在检查活动的代理会话";
+"island.terminalOwnership" = "Open Island 将在确认应用或终端后显示实时代理";
+"island.noTerminals" = "没有活动的代理会话";
+"island.startAgent" = "在应用或终端中启动编码代理";
+"island.recentSessions" = "最近的会话将保留在这里，直到对应应用或终端再次活动";
 "island.hint.installHooks" = "尚未安装任何代理 hook，会话不会触发事件 · 点击配置";
 
 /* Island Panel - Session List */

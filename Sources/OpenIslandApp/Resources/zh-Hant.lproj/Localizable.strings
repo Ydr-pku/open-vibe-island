@@ -174,11 +174,11 @@
 "settings.update.available" = "v%@ 可更新 — 點擊更新";
 
 /* Island Panel - Bootstrap */
-"island.checkingTerminals" = "正在檢查已開啟的終端機工作階段";
-"island.terminalOwnership" = "Open Island 將在確認終端機歸屬後顯示即時代理";
-"island.noTerminals" = "沒有已開啟的終端機工作階段";
-"island.startAgent" = "在終端機中啟動編碼代理";
-"island.recentSessions" = "最近的工作階段將保留在這裡，直到終端機重新開啟";
+"island.checkingTerminals" = "正在檢查活動中的代理工作階段";
+"island.terminalOwnership" = "Open Island 將在確認應用程式或終端機後顯示即時代理";
+"island.noTerminals" = "沒有活動中的代理工作階段";
+"island.startAgent" = "在應用程式或終端機中啟動編碼代理";
+"island.recentSessions" = "最近的工作階段將保留在這裡，直到對應應用程式或終端機再次活動";
 "island.hint.installHooks" = "尚未安裝任何代理 hook，工作階段不會觸發事件 · 點擊設定";
 
 /* Island Panel - Session List */

@@ -360,7 +360,20 @@ public struct SessionState: Equatable, Sendable {
             // the rollout watcher / app-server notifications.
             if session.isCodexAppSession {
                 let wasAlive = session.isProcessAlive
-                session.isProcessAlive = aliveSessionIDs.contains(id)
+                if aliveSessionIDs.contains(id) {
+                    session.isProcessAlive = true
+                    session.processNotSeenCount = 0
+                } else {
+                    // NSWorkspace can briefly miss Codex.app during app launch,
+                    // conversation switches, or workspace registration. Keep a
+                    // restored session through the first miss so the next
+                    // lightweight app-running probe can recover it instead of
+                    // making the island flash and immediately become empty.
+                    session.processNotSeenCount += 1
+                    if session.processNotSeenCount >= 2 {
+                        session.isProcessAlive = false
+                    }
+                }
                 if session.isProcessAlive != wasAlive {
                     changed.insert(id)
                 }
