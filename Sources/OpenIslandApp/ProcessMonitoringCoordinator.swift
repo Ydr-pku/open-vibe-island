@@ -715,6 +715,8 @@ final class ProcessMonitoringCoordinator {
     // MARK: - Synthetic Codex Desktop session
 
     private static let syntheticCodexDesktopSessionID = "codex-desktop:unattributed"
+    private static let syntheticCodexDesktopSummary =
+        "Codex Desktop is open. No attributable task details are available."
 
     /// Codex side conversations currently have no independent app-server
     /// thread or rollout file. Keep one honest app-level placeholder visible
@@ -737,7 +739,14 @@ final class ProcessMonitoringCoordinator {
         guard !hasVisibleCodexSession else {
             return baseSessions
         }
-        if let existingFallback {
+        if var existingFallback {
+            // Normalize placeholders persisted by older builds, which marked
+            // app presence itself as a perpetually running task.
+            existingFallback.phase = .completed
+            existingFallback.summary = Self.syntheticCodexDesktopSummary
+            existingFallback.attachmentState = .attached
+            existingFallback.isSessionEnded = false
+            existingFallback.isProcessAlive = true
             return baseSessions + [existingFallback]
         }
 
@@ -747,8 +756,11 @@ final class ProcessMonitoringCoordinator {
             tool: .codex,
             origin: .live,
             attachmentState: .attached,
-            phase: .running,
-            summary: "Codex Desktop is active.",
+            // App presence alone does not prove that an agent turn is
+            // running. Side conversations are not exposed as protocol
+            // threads, so keep this fallback visible but neutral.
+            phase: .completed,
+            summary: Self.syntheticCodexDesktopSummary,
             updatedAt: now,
             jumpTarget: JumpTarget(
                 terminalApp: "Codex.app",

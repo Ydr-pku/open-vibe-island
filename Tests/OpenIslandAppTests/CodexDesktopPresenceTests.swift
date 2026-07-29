@@ -58,6 +58,8 @@ struct CodexDesktopPresenceTests {
 
         #expect(sessions.count == 1)
         #expect(sessions[0].title == "Codex Desktop")
+        #expect(sessions[0].phase == .completed)
+        #expect(sessions[0].summary.contains("No attributable task details"))
         #expect(sessions[0].isVisibleInIsland)
         #expect(coordinator.isSyntheticCodexDesktopSession(sessions[0]))
 
@@ -67,6 +69,16 @@ struct CodexDesktopPresenceTests {
             now: Date(timeIntervalSince1970: 20_000)
         )
         #expect(nextTick == sessions)
+
+        var legacyRunningFallback = sessions[0]
+        legacyRunningFallback.phase = .running
+        legacyRunningFallback.summary = "Codex Desktop is active."
+        let normalized = coordinator.mergedWithSyntheticCodexDesktopSession(
+            existingSessions: [legacyRunningFallback],
+            isCodexAppRunning: true
+        )
+        #expect(normalized[0].phase == .completed)
+        #expect(normalized[0].summary.contains("No attributable task details"))
     }
 
     @Test
