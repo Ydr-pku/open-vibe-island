@@ -749,7 +749,7 @@ struct IslandPanelView: View {
                 Text("tot/max")
                     .font(.system(size: 8.5, weight: .medium))
                     .foregroundStyle(V6Palette.paper.opacity(0.26))
-                    .frame(width: 82, alignment: .trailing)
+                    .frame(width: 118, alignment: .trailing)
             }
 
             UsageMiniChartRow(
@@ -1313,14 +1313,17 @@ private struct UsageMiniChartRow: View {
                 Text(totalAndMaximumText)
                     .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                     .foregroundStyle(tint.opacity(0.86))
-                    .frame(width: 82, alignment: .trailing)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .allowsTightening(true)
+                    .frame(width: 118, alignment: .trailing)
             }
 
             if showsHourAxis {
                 HStack(spacing: 7) {
                     Color.clear.frame(width: 52)
                     hourAxis
-                    Color.clear.frame(width: 82)
+                    Color.clear.frame(width: 118)
                 }
                 .frame(height: 8)
             }
