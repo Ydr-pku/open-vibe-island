@@ -148,6 +148,95 @@ struct CodexUsageTests {
     }
 
     @Test
+    func codexUsageLoaderIncludesArchivedSideTasks() throws {
+        let rootURL = temporaryRootURL(named: "codex-usage-side-task")
+        let sessionsRootURL = rootURL.appendingPathComponent("sessions", isDirectory: true)
+        let archivedRootURL = rootURL.appendingPathComponent("archived_sessions", isDirectory: true)
+        let activeRolloutURL = sessionsRootURL.appendingPathComponent("rollout-active.jsonl")
+        let sideTaskRolloutURL = archivedRootURL.appendingPathComponent("rollout-side-task.jsonl")
+
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try writeRollout(
+            [
+                rolloutLine(
+                    timestamp: "2026-04-03T04:00:00.000Z",
+                    type: "event_msg",
+                    payload: tokenCountPayload(usedPercentage: 12)
+                ),
+            ],
+            to: activeRolloutURL
+        )
+        try writeRollout(
+            [
+                rolloutLine(
+                    timestamp: "2026-04-03T05:00:00.000Z",
+                    type: "event_msg",
+                    payload: tokenCountPayload(usedPercentage: 13)
+                ),
+            ],
+            to: sideTaskRolloutURL
+        )
+
+        let snapshot = try CodexUsageLoader.load(
+            fromRootURLs: [sessionsRootURL, archivedRootURL]
+        )
+
+        #expect(resolvedPath(snapshot?.sourceFilePath) == sideTaskRolloutURL.resolvingSymlinksInPath().path)
+        #expect(snapshot?.windows.first?.roundedUsedPercentage == 13)
+        #expect(snapshot?.capturedAt == isoDate("2026-04-03T05:00:00.000Z"))
+    }
+
+    @Test
+    func codexUsageLoaderChoosesLatestEventAcrossConcurrentRollouts() throws {
+        let rootURL = temporaryRootURL(named: "codex-usage-concurrent")
+        let firstRolloutURL = rootURL.appendingPathComponent("rollout-modified-later.jsonl")
+        let secondRolloutURL = rootURL.appendingPathComponent("rollout-event-later.jsonl")
+
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        try writeRollout(
+            [
+                rolloutLine(
+                    timestamp: "2026-04-03T04:00:00.000Z",
+                    type: "event_msg",
+                    payload: tokenCountPayload(usedPercentage: 12)
+                ),
+            ],
+            to: firstRolloutURL
+        )
+        try writeRollout(
+            [
+                rolloutLine(
+                    timestamp: "2026-04-03T05:00:00.000Z",
+                    type: "event_msg",
+                    payload: tokenCountPayload(usedPercentage: 13)
+                ),
+            ],
+            to: secondRolloutURL
+        )
+
+        try setModificationDate(
+            #require(isoDate("2026-04-03T06:00:00.000Z")),
+            for: firstRolloutURL
+        )
+        try setModificationDate(
+            #require(isoDate("2026-04-03T05:30:00.000Z")),
+            for: secondRolloutURL
+        )
+
+        let snapshot = try CodexUsageLoader.load(fromRootURL: rootURL)
+
+        #expect(resolvedPath(snapshot?.sourceFilePath) == secondRolloutURL.resolvingSymlinksInPath().path)
+        #expect(snapshot?.windows.first?.roundedUsedPercentage == 13)
+        #expect(snapshot?.capturedAt == isoDate("2026-04-03T05:00:00.000Z"))
+    }
+
+    @Test
     func codexUsageLoaderFormatsNonStandardWindowLengths() throws {
         let rootURL = temporaryRootURL(named: "codex-usage-labels")
         let rolloutURL = rootURL
@@ -290,4 +379,19 @@ private func rolloutLine(
     ]
     let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     return String(decoding: data, as: UTF8.self)
+}
+
+private func tokenCountPayload(usedPercentage: Double) -> [String: Any] {
+    [
+        "type": "token_count",
+        "rate_limits": [
+            "limit_id": "codex",
+            "plan_type": "pro",
+            "primary": [
+                "used_percent": usedPercentage,
+                "window_minutes": 300,
+                "resets_at": 1_775_158_295,
+            ],
+        ],
+    ]
 }

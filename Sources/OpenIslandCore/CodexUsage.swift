@@ -127,27 +127,87 @@ public struct CodexLocalUsageSnapshot: Equatable, Codable, Sendable {
 
 public enum CodexUsageLoader {
     public static let defaultRootURL = CodexRolloutDiscovery.defaultRootURL
+    /// Codex moves archived threads and side conversations out of `sessions/`,
+    /// but their token-count events still carry the account-wide rate limits.
+    public static let defaultArchivedRootURL = CodexArchivedSessionIndex.defaultDirectoryURL
+    public static let defaultRootURLs = [defaultRootURL, defaultArchivedRootURL]
 
-    private struct Candidate {
+    private struct Candidate: Sendable {
         var fileURL: URL
         var modifiedAt: Date
     }
 
     public static func load(
-        fromRootURL rootURL: URL = defaultRootURL,
         fileManager: FileManager = .default
     ) throws -> CodexUsageSnapshot? {
-        guard fileManager.fileExists(atPath: rootURL.path),
-              let enumerator = fileManager.enumerator(
-                at: rootURL,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-                options: [.skipsHiddenFiles]
-              ) else {
-            return nil
-        }
+        try load(fromRootURLs: defaultRootURLs, fileManager: fileManager)
+    }
 
+    public static func load(
+        fromRootURL rootURL: URL,
+        fileManager: FileManager = .default
+    ) throws -> CodexUsageSnapshot? {
+        try load(fromRootURLs: [rootURL], fileManager: fileManager)
+    }
+
+    public static func load(
+        fromRootURLs rootURLs: [URL],
+        fileManager: FileManager = .default
+    ) throws -> CodexUsageSnapshot? {
         var candidates: [Candidate] = []
 
+        for rootURL in rootURLs {
+            guard fileManager.fileExists(atPath: rootURL.path),
+                  let enumerator = fileManager.enumerator(
+                    at: rootURL,
+                    includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                  ) else {
+                continue
+            }
+
+            appendCandidates(from: enumerator, to: &candidates)
+        }
+
+        let sortedCandidates = candidates.sorted { lhs, rhs in
+            if lhs.modifiedAt == rhs.modifiedAt {
+                return lhs.fileURL.path.localizedStandardCompare(rhs.fileURL.path) == .orderedDescending
+            }
+
+            return lhs.modifiedAt > rhs.modifiedAt
+        }
+
+        var latestSnapshot: CodexUsageSnapshot?
+        for candidate in sortedCandidates {
+            // A file cannot contain an event newer than its own modification
+            // date. Once candidates are older than the best event found, the
+            // remaining rollout files cannot improve the result.
+            if let capturedAt = latestSnapshot?.capturedAt,
+               candidate.modifiedAt < capturedAt {
+                break
+            }
+
+            guard let snapshot = loadLatestSnapshot(
+                from: candidate.fileURL,
+                modifiedAt: candidate.modifiedAt
+            ) else {
+                continue
+            }
+
+            if latestSnapshot == nil
+                || (snapshot.capturedAt ?? candidate.modifiedAt)
+                    > (latestSnapshot?.capturedAt ?? .distantPast) {
+                latestSnapshot = snapshot
+            }
+        }
+
+        return latestSnapshot
+    }
+
+    private static func appendCandidates(
+        from enumerator: FileManager.DirectoryEnumerator,
+        to candidates: inout [Candidate]
+    ) {
         for case let fileURL as URL in enumerator {
             guard fileURL.lastPathComponent.hasPrefix("rollout-"),
                   fileURL.pathExtension == "jsonl",
@@ -165,25 +225,6 @@ public enum CodexUsageLoader {
                 )
             )
         }
-
-        let sortedCandidates = candidates.sorted { lhs, rhs in
-            if lhs.modifiedAt == rhs.modifiedAt {
-                return lhs.fileURL.path.localizedStandardCompare(rhs.fileURL.path) == .orderedDescending
-            }
-
-            return lhs.modifiedAt > rhs.modifiedAt
-        }
-
-        for candidate in sortedCandidates {
-            if let snapshot = loadLatestSnapshot(
-                from: candidate.fileURL,
-                modifiedAt: candidate.modifiedAt
-            ) {
-                return snapshot
-            }
-        }
-
-        return nil
     }
 
     private static func loadLatestSnapshot(from fileURL: URL, modifiedAt: Date) -> CodexUsageSnapshot? {
