@@ -765,7 +765,8 @@ struct IslandPanelView: View {
             UsageMiniChartRow(
                 label: lang.t("island.usageHistory.today24h"),
                 points: hourly,
-                tint: .orange.opacity(0.92)
+                tint: .orange.opacity(0.92),
+                showsHourAxis: true
             )
         }
         .padding(.horizontal, 10)
@@ -1262,6 +1263,7 @@ private struct UsageMiniChartRow: View {
     let label: String
     let points: [UsageHistoryPoint]
     let tint: Color
+    var showsHourAxis = false
 
     private var peakTokens: Int64 {
         max(points.compactMap(\.tokens).max() ?? 0, 1)
@@ -1281,38 +1283,68 @@ private struct UsageMiniChartRow: View {
         guard let totalTokens, let maximumTokens else {
             return "--/--"
         }
-        return "\(Self.compactTokenText(totalTokens))/\(Self.compactTokenText(maximumTokens))"
+        return "\(UsageTokenFormatter.compact(totalTokens))/\(UsageTokenFormatter.compact(maximumTokens))"
     }
 
     var body: some View {
-        HStack(spacing: 7) {
-            Text(label)
-                .font(.system(size: 8.5, weight: .semibold))
-                .foregroundStyle(V6Palette.paper.opacity(0.48))
-                .frame(width: 52, alignment: .leading)
+        VStack(spacing: 1) {
+            HStack(spacing: 7) {
+                Text(label)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(V6Palette.paper.opacity(0.48))
+                    .frame(width: 52, alignment: .leading)
 
-            GeometryReader { geometry in
-                let spacing: CGFloat = 2
-                let count = max(points.count, 1)
-                let barWidth = max(
-                    1,
-                    (geometry.size.width - (CGFloat(count - 1) * spacing)) / CGFloat(count)
-                )
+                GeometryReader { geometry in
+                    let spacing: CGFloat = 2
+                    let count = max(points.count, 1)
+                    let barWidth = max(
+                        1,
+                        (geometry.size.width - (CGFloat(count - 1) * spacing)) / CGFloat(count)
+                    )
 
-                HStack(alignment: .bottom, spacing: spacing) {
-                    ForEach(points) { point in
-                        usageBar(point, width: barWidth, availableHeight: geometry.size.height)
+                    HStack(alignment: .bottom, spacing: spacing) {
+                        ForEach(points) { point in
+                            usageBar(point, width: barWidth, availableHeight: geometry.size.height)
+                        }
                     }
                 }
-            }
-            .frame(height: 17)
+                .frame(height: 17)
 
-            Text(totalAndMaximumText)
-                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                .foregroundStyle(tint.opacity(0.86))
-                .frame(width: 82, alignment: .trailing)
+                Text(totalAndMaximumText)
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(tint.opacity(0.86))
+                    .frame(width: 82, alignment: .trailing)
+            }
+
+            if showsHourAxis {
+                HStack(spacing: 7) {
+                    Color.clear.frame(width: 52)
+                    hourAxis
+                    Color.clear.frame(width: 82)
+                }
+                .frame(height: 8)
+            }
         }
-        .frame(height: 18)
+        .frame(height: showsHourAxis ? 27 : 18)
+    }
+
+    private var hourAxis: some View {
+        GeometryReader { geometry in
+            let spacing: CGFloat = 2
+            let barWidth = max(1, (geometry.size.width - (23 * spacing)) / 24)
+
+            ZStack(alignment: .topLeading) {
+                ForEach([0, 4, 8, 12, 16, 20], id: \.self) { hour in
+                    Text("\(hour)")
+                        .font(.system(size: 6.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(V6Palette.paper.opacity(0.3))
+                        .position(
+                            x: (CGFloat(hour) * (barWidth + spacing)) + (barWidth / 2),
+                            y: 4
+                        )
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -1336,22 +1368,29 @@ private struct UsageMiniChartRow: View {
         }
     }
 
-    private static func compactTokenText(_ tokens: Int64) -> String {
+    private static func exactTokenText(_ tokens: Int64) -> String {
+        tokens.formatted(.number.grouping(.automatic)) + " tokens"
+    }
+}
+
+enum UsageTokenFormatter {
+    static func compact(_ tokens: Int64) -> String {
         let value = Double(tokens)
         switch value {
-        case 1_000_000_000...:
-            return String(format: "%.1fB", value / 1_000_000_000)
-        case 1_000_000...:
-            return String(format: "%.1fM", value / 1_000_000)
-        case 1_000...:
-            return String(format: "%.1fK", value / 1_000)
+        case 100_000_000...:
+            return formatted(value / 100_000_000, unit: "亿")
+        case 10_000...:
+            return formatted(value / 10_000, unit: "万")
         default:
             return "\(tokens)"
         }
     }
 
-    private static func exactTokenText(_ tokens: Int64) -> String {
-        tokens.formatted(.number.grouping(.automatic)) + " tokens"
+    private static func formatted(_ value: Double, unit: String) -> String {
+        var decimal = Decimal(value)
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &decimal, 1, .plain)
+        return "\(NSDecimalNumber(decimal: rounded).stringValue)\(unit)"
     }
 }
 

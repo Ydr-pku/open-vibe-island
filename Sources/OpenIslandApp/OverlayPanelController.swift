@@ -20,7 +20,7 @@ final class OverlayPanelController {
     private static let notificationMeasuredContentPadding: CGFloat = 8
     private static let notificationEstimatedVerticalInsets: CGFloat = 36
     private static let openedEmptyStateHeight: CGFloat = 108
-    private static let usageHistoryOverviewHeight: CGFloat = 112
+    private static let usageHistoryOverviewHeight: CGFloat = 121
     private static let questionCardBaseHeight: CGFloat = 110
     private static let questionCardMaxHeight: CGFloat = 420
     // Completion card chrome breakdown (everything except the scrollable text):

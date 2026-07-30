@@ -47,4 +47,14 @@ struct UsagePercentageTests {
             ) == nil
         )
     }
+
+    @Test
+    func compactTokenTextUsesChineseUnits() {
+        #expect(UsageTokenFormatter.compact(9_999) == "9999")
+        #expect(UsageTokenFormatter.compact(10_000) == "1万")
+        #expect(UsageTokenFormatter.compact(12_500) == "1.3万")
+        #expect(UsageTokenFormatter.compact(24_241_353) == "2424.1万")
+        #expect(UsageTokenFormatter.compact(100_000_000) == "1亿")
+        #expect(UsageTokenFormatter.compact(1_250_000_000) == "12.5亿")
+    }
 }
