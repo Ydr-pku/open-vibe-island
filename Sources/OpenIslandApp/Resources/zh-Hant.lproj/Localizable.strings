@@ -200,8 +200,8 @@
 "island.collapseList" = "收起清單";
 "island.usageWaiting" = "等待用量資料";
 "island.usageHistory.title" = "Token 用量";
-"island.usageHistory.official30d" = "官方 30 天";
-"island.usageHistory.local30d" = "本機 30 天";
+"island.usageHistory.official30d" = "帳戶 30 日";
+"island.usageHistory.local30d" = "本機 30 日";
 "island.usageHistory.today24h" = "今日 24 時";
 
 /* Island Panel - Approval */
