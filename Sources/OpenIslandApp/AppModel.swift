@@ -701,6 +701,41 @@ final class AppModel {
             }
             return try await self.codexAppServer.readAccountUsageSnapshot()
         }
+        hooks.codexDesktopUsageProvider = { [weak self] in
+            guard let self else { return [] }
+            let earliestDate = Calendar.current.date(
+                byAdding: .day,
+                value: -29,
+                to: Calendar.current.startOfDay(for: .now)
+            ) ?? .distantPast
+            let threads = self.state.sessions
+                .filter {
+                    $0.tool == .codex
+                        && !$0.isRemote
+                        && $0.firstSeenAt >= earliestDate
+                        && UUID(uuidString: $0.id) != nil
+                }
+                .prefix(50)
+                .map {
+                    CodexDesktopIPCUsageLoader.Thread(
+                        id: $0.id,
+                        updatedAt: $0.updatedAt,
+                        startedAt: $0.firstSeenAt
+                    )
+                }
+            return await Task.detached(priority: .utility) {
+                var threadsByID = Dictionary(
+                    uniqueKeysWithValues: threads.map { ($0.id, $0) }
+                )
+                for thread in CodexDesktopThreadDiscovery.load(since: earliestDate) {
+                    threadsByID[thread.id] = thread
+                }
+                let candidates = threadsByID.values
+                    .sorted { $0.updatedAt > $1.updatedAt }
+                    .prefix(50)
+                return CodexDesktopIPCUsageLoader.load(threads: Array(candidates))
+            }.value
+        }
 
         monitoring.syntheticClaudeSessionPrefix = Self.syntheticClaudeSessionPrefix
         monitoring.stateAccessor = { [weak self] in self?.state ?? SessionState() }

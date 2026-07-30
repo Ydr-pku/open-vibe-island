@@ -50,6 +50,9 @@ final class HookInstallationCoordinator {
     var codexAccountUsageProvider: (() async throws -> CodexAccountUsageSnapshot)?
 
     @ObservationIgnored
+    var codexDesktopUsageProvider: (() async -> [CodexDesktopThreadUsage])?
+
+    @ObservationIgnored
     var onCodexUsageHistoryUpdated: (() -> Void)?
 
     @ObservationIgnored
@@ -822,8 +825,9 @@ final class HookInstallationCoordinator {
             guard let self else { return }
             defer { self.codexUsageHistoryRefreshTask = nil }
 
+            let desktopThreadUsages = await self.codexDesktopUsageProvider?() ?? []
             async let localSnapshot = Task.detached(priority: .utility) {
-                CodexLocalUsageLoader.load()
+                CodexLocalUsageLoader.load(desktopThreadUsages: desktopThreadUsages)
             }.value
 
             if let codexAccountUsageProvider,

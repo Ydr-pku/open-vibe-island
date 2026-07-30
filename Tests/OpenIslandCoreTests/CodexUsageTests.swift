@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import OpenIslandCore
 
@@ -396,6 +397,119 @@ struct CodexUsageTests {
                 CodexUsageHistoryBucket(key: "10", tokens: 3_000),
             ]
         )
+    }
+
+    @Test
+    func localUsageLoaderAddsOnlyDesktopTokensMissingFromRollout() throws {
+        let rootURL = temporaryRootURL(named: "codex-local-ipc-delta")
+        let threadID = "019fb0ab-c4d7-77d0-802d-0bcefdb2d789"
+        let rolloutURL = rootURL.appendingPathComponent(
+            "rollout-2026-07-30T01-00-00-\(threadID).jsonl"
+        )
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try writeRollout(
+            [
+                rolloutLine(
+                    timestamp: "2026-07-30T01:10:00.000Z",
+                    type: "event_msg",
+                    payload: [
+                        "type": "token_count",
+                        "info": ["last_token_usage": ["total_tokens": 2_000]],
+                    ]
+                ),
+            ],
+            to: rolloutURL
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
+        let now = try #require(isoDate("2026-07-30T04:00:00.000Z"))
+        let updatedAt = try #require(isoDate("2026-07-30T02:15:00.000Z"))
+        let startedAt = try #require(isoDate("2026-07-30T00:00:00.000Z"))
+        try setModificationDate(now, for: rolloutURL)
+
+        let snapshot = CodexLocalUsageLoader.load(
+            fromRootURL: rootURL,
+            now: now,
+            calendar: calendar,
+            desktopThreadUsages: [
+                CodexDesktopThreadUsage(
+                    threadID: threadID,
+                    totalTokens: 5_000,
+                    updatedAt: updatedAt,
+                    startedAt: startedAt
+                ),
+            ]
+        )
+
+        #expect(
+            snapshot.dailyBuckets == [
+                CodexUsageHistoryBucket(key: "2026-07-30", tokens: 5_000),
+            ]
+        )
+        #expect(
+            snapshot.hourlyBuckets == [
+                CodexUsageHistoryBucket(key: "09", tokens: 2_000),
+                CodexUsageHistoryBucket(key: "10", tokens: 3_000),
+            ]
+        )
+    }
+
+    @Test
+    func desktopIPCUsageDecodesSnapshotTokenTotal() throws {
+        let threadID = "019fb0ab-c4d7-77d0-802d-0bcefdb2d789"
+        let message: [String: Any] = [
+            "type": "broadcast",
+            "method": "thread-stream-state-changed",
+            "params": [
+                "conversationId": threadID,
+                "change": [
+                    "type": "snapshot",
+                    "conversationState": [
+                        "latestTokenUsageInfo": [
+                            "total": ["totalTokens": 17_910_141],
+                        ],
+                    ],
+                ],
+            ],
+        ]
+
+        #expect(
+            CodexDesktopIPCUsageLoader.tokenTotal(from: message, threadID: threadID)
+                == 17_910_141
+        )
+    }
+
+    @Test
+    func desktopThreadDiscoveryFindsOnlyThreadsStartedAfterCutoff() throws {
+        let rootURL = temporaryRootURL(named: "codex-thread-discovery")
+        let databaseURL = rootURL.appendingPathComponent("logs.sqlite")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        var database: OpaquePointer?
+        try #require(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        let oldThread = "019fae43-b69b-7421-9062-c986585f3b02"
+        let recentThread = "019fb0ab-c4d7-77d0-802d-0bcefdb2d789"
+        let sql = """
+            CREATE TABLE logs (thread_id TEXT, ts INTEGER);
+            INSERT INTO logs VALUES ('\(oldThread)', 100);
+            INSERT INTO logs VALUES ('\(oldThread)', 300);
+            INSERT INTO logs VALUES ('\(recentThread)', 250);
+            INSERT INTO logs VALUES ('\(recentThread)', 350);
+            """
+        try #require(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+
+        let threads = CodexDesktopThreadDiscovery.load(
+            databaseURL: databaseURL,
+            since: Date(timeIntervalSince1970: 200)
+        )
+
+        #expect(threads.map(\.id) == [recentThread])
+        #expect(threads.first?.startedAt == Date(timeIntervalSince1970: 250))
+        #expect(threads.first?.updatedAt == Date(timeIntervalSince1970: 350))
     }
 }
 

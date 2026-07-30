@@ -398,13 +398,15 @@ public enum CodexLocalUsageLoader {
     public static func load(
         now: Date = .now,
         calendar: Calendar = .current,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        desktopThreadUsages: [CodexDesktopThreadUsage] = []
     ) -> CodexLocalUsageSnapshot {
         load(
             fromRootURLs: defaultRootURLs,
             now: now,
             calendar: calendar,
-            fileManager: fileManager
+            fileManager: fileManager,
+            desktopThreadUsages: desktopThreadUsages
         )
     }
 
@@ -412,13 +414,15 @@ public enum CodexLocalUsageLoader {
         fromRootURL rootURL: URL,
         now: Date = .now,
         calendar: Calendar = .current,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        desktopThreadUsages: [CodexDesktopThreadUsage] = []
     ) -> CodexLocalUsageSnapshot {
         load(
             fromRootURLs: [rootURL],
             now: now,
             calendar: calendar,
-            fileManager: fileManager
+            fileManager: fileManager,
+            desktopThreadUsages: desktopThreadUsages
         )
     }
 
@@ -426,13 +430,15 @@ public enum CodexLocalUsageLoader {
         fromRootURLs rootURLs: [URL],
         now: Date = .now,
         calendar: Calendar = .current,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        desktopThreadUsages: [CodexDesktopThreadUsage] = []
     ) -> CodexLocalUsageSnapshot {
         let today = calendar.startOfDay(for: now)
         let firstDay = calendar.date(byAdding: .day, value: -29, to: today) ?? today
         let candidateCutoff = firstDay.addingTimeInterval(-86_400)
         var daily: [String: Int64] = [:]
         var hourly: [String: Int64] = [:]
+        var rolloutTokensByThread: [String: Int64] = [:]
 
         for rootURL in rootURLs {
             guard fileManager.fileExists(atPath: rootURL.path),
@@ -457,13 +463,32 @@ public enum CodexLocalUsageLoader {
 
                 accumulate(
                     fileURL: fileURL,
+                    threadID: threadID(from: fileURL),
                     firstDay: firstDay,
                     today: today,
                     now: now,
                     calendar: calendar,
                     daily: &daily,
-                    hourly: &hourly
+                    hourly: &hourly,
+                    rolloutTokensByThread: &rolloutTokensByThread
                 )
+            }
+        }
+
+        for usage in desktopThreadUsages {
+            guard usage.startedAt >= firstDay,
+                  usage.updatedAt >= firstDay,
+                  usage.updatedAt <= now else {
+                continue
+            }
+            let alreadyCounted = rolloutTokensByThread[usage.threadID, default: 0]
+            let missingTokens = max(0, usage.totalTokens - alreadyCounted)
+            guard missingTokens > 0 else { continue }
+
+            daily[dayKey(for: usage.updatedAt, calendar: calendar), default: 0] += missingTokens
+            if usage.updatedAt >= today {
+                let hour = calendar.component(.hour, from: usage.updatedAt)
+                hourly[String(format: "%02d", hour), default: 0] += missingTokens
             }
         }
 
@@ -480,12 +505,14 @@ public enum CodexLocalUsageLoader {
 
     private static func accumulate(
         fileURL: URL,
+        threadID: String?,
         firstDay: Date,
         today: Date,
         now: Date,
         calendar: Calendar,
         daily: inout [String: Int64],
-        hourly: inout [String: Int64]
+        hourly: inout [String: Int64],
+        rolloutTokensByThread: inout [String: Int64]
     ) {
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
             return
@@ -499,36 +526,42 @@ public enum CodexLocalUsageLoader {
             for line in extractCompleteLines(from: &buffer) {
                 accumulate(
                     line: line,
+                    threadID: threadID,
                     firstDay: firstDay,
                     today: today,
                     now: now,
                     calendar: calendar,
                     daily: &daily,
-                    hourly: &hourly
+                    hourly: &hourly,
+                    rolloutTokensByThread: &rolloutTokensByThread
                 )
             }
         }
         if !buffer.isEmpty {
             accumulate(
                 line: String(decoding: buffer, as: UTF8.self),
+                threadID: threadID,
                 firstDay: firstDay,
                 today: today,
                 now: now,
                 calendar: calendar,
                 daily: &daily,
-                hourly: &hourly
+                hourly: &hourly,
+                rolloutTokensByThread: &rolloutTokensByThread
             )
         }
     }
 
     private static func accumulate(
         line: String,
+        threadID: String?,
         firstDay: Date,
         today: Date,
         now: Date,
         calendar: Calendar,
         daily: inout [String: Int64],
-        hourly: inout [String: Int64]
+        hourly: inout [String: Int64],
+        rolloutTokensByThread: inout [String: Int64]
     ) {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -548,6 +581,9 @@ public enum CodexLocalUsageLoader {
 
         let dayKey = dayKey(for: timestamp, calendar: calendar)
         daily[dayKey, default: 0] += tokenNumber.int64Value
+        if let threadID {
+            rolloutTokensByThread[threadID, default: 0] += tokenNumber.int64Value
+        }
 
         if timestamp >= today {
             let hour = calendar.component(.hour, from: timestamp)
@@ -585,5 +621,12 @@ public enum CodexLocalUsageLoader {
             components.month ?? 0,
             components.day ?? 0
         )
+    }
+
+    private static func threadID(from fileURL: URL) -> String? {
+        let basename = fileURL.deletingPathExtension().lastPathComponent
+        guard basename.count >= 36 else { return nil }
+        let candidate = String(basename.suffix(36))
+        return UUID(uuidString: candidate) == nil ? nil : candidate.lowercased()
     }
 }
