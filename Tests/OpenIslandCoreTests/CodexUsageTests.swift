@@ -336,6 +336,67 @@ struct CodexUsageTests {
             ]
         )
     }
+
+    @Test
+    func localUsageLoaderIncludesArchivedSideTaskTokens() throws {
+        let rootURL = temporaryRootURL(named: "codex-local-side-task")
+        let sessionsRootURL = rootURL.appendingPathComponent("sessions", isDirectory: true)
+        let archivedRootURL = rootURL.appendingPathComponent("archived_sessions", isDirectory: true)
+        let activeRolloutURL = sessionsRootURL.appendingPathComponent("rollout-active.jsonl")
+        let sideTaskRolloutURL = archivedRootURL.appendingPathComponent("rollout-side-task.jsonl")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try writeRollout(
+            [
+                rolloutLine(
+                    timestamp: "2026-07-29T01:10:00.000Z",
+                    type: "event_msg",
+                    payload: [
+                        "type": "token_count",
+                        "info": ["last_token_usage": ["total_tokens": 2_000]],
+                    ]
+                ),
+            ],
+            to: activeRolloutURL
+        )
+        try writeRollout(
+            [
+                rolloutLine(
+                    timestamp: "2026-07-29T02:10:00.000Z",
+                    type: "event_msg",
+                    payload: [
+                        "type": "token_count",
+                        "info": ["last_token_usage": ["total_tokens": 3_000]],
+                    ]
+                ),
+            ],
+            to: sideTaskRolloutURL
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
+        let now = try #require(isoDate("2026-07-29T04:00:00.000Z"))
+        try setModificationDate(now, for: activeRolloutURL)
+        try setModificationDate(now, for: sideTaskRolloutURL)
+
+        let snapshot = CodexLocalUsageLoader.load(
+            fromRootURLs: [sessionsRootURL, archivedRootURL],
+            now: now,
+            calendar: calendar
+        )
+
+        #expect(
+            snapshot.dailyBuckets == [
+                CodexUsageHistoryBucket(key: "2026-07-29", tokens: 5_000),
+            ]
+        )
+        #expect(
+            snapshot.hourlyBuckets == [
+                CodexUsageHistoryBucket(key: "09", tokens: 2_000),
+                CodexUsageHistoryBucket(key: "10", tokens: 3_000),
+            ]
+        )
+    }
 }
 
 private func temporaryRootURL(named name: String) -> URL {

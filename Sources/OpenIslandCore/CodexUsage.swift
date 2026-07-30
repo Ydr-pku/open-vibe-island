@@ -393,9 +393,37 @@ public enum CodexUsageLoader {
 
 public enum CodexLocalUsageLoader {
     private static let streamingChunkSize = 256 * 1_024
+    public static let defaultRootURLs = CodexUsageLoader.defaultRootURLs
 
     public static func load(
-        fromRootURL rootURL: URL = CodexRolloutDiscovery.defaultRootURL,
+        now: Date = .now,
+        calendar: Calendar = .current,
+        fileManager: FileManager = .default
+    ) -> CodexLocalUsageSnapshot {
+        load(
+            fromRootURLs: defaultRootURLs,
+            now: now,
+            calendar: calendar,
+            fileManager: fileManager
+        )
+    }
+
+    public static func load(
+        fromRootURL rootURL: URL,
+        now: Date = .now,
+        calendar: Calendar = .current,
+        fileManager: FileManager = .default
+    ) -> CodexLocalUsageSnapshot {
+        load(
+            fromRootURLs: [rootURL],
+            now: now,
+            calendar: calendar,
+            fileManager: fileManager
+        )
+    }
+
+    public static func load(
+        fromRootURLs rootURLs: [URL],
         now: Date = .now,
         calendar: Calendar = .current,
         fileManager: FileManager = .default
@@ -406,39 +434,37 @@ public enum CodexLocalUsageLoader {
         var daily: [String: Int64] = [:]
         var hourly: [String: Int64] = [:]
 
-        guard fileManager.fileExists(atPath: rootURL.path),
-              let enumerator = fileManager.enumerator(
-                at: rootURL,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-                options: [.skipsHiddenFiles]
-              ) else {
-            return CodexLocalUsageSnapshot(
-                dailyBuckets: [],
-                hourlyBuckets: [],
-                capturedAt: now
-            )
-        }
-
-        for case let fileURL as URL in enumerator {
-            guard fileURL.lastPathComponent.hasPrefix("rollout-"),
-                  fileURL.pathExtension == "jsonl",
-                  let values = try? fileURL.resourceValues(
-                    forKeys: [.contentModificationDateKey, .isRegularFileKey]
-                  ),
-                  values.isRegularFile == true,
-                  (values.contentModificationDate ?? .distantPast) >= candidateCutoff else {
+        for rootURL in rootURLs {
+            guard fileManager.fileExists(atPath: rootURL.path),
+                  let enumerator = fileManager.enumerator(
+                    at: rootURL,
+                    includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                  ) else {
                 continue
             }
 
-            accumulate(
-                fileURL: fileURL,
-                firstDay: firstDay,
-                today: today,
-                now: now,
-                calendar: calendar,
-                daily: &daily,
-                hourly: &hourly
-            )
+            for case let fileURL as URL in enumerator {
+                guard fileURL.lastPathComponent.hasPrefix("rollout-"),
+                      fileURL.pathExtension == "jsonl",
+                      let values = try? fileURL.resourceValues(
+                        forKeys: [.contentModificationDateKey, .isRegularFileKey]
+                      ),
+                      values.isRegularFile == true,
+                      (values.contentModificationDate ?? .distantPast) >= candidateCutoff else {
+                    continue
+                }
+
+                accumulate(
+                    fileURL: fileURL,
+                    firstDay: firstDay,
+                    today: today,
+                    now: now,
+                    calendar: calendar,
+                    daily: &daily,
+                    hourly: &hourly
+                )
+            }
         }
 
         return CodexLocalUsageSnapshot(
