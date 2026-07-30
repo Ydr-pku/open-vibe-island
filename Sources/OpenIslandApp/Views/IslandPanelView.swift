@@ -339,34 +339,27 @@ struct IslandPanelView: View {
         if usesNotchAwareOpenedHeader {
             GeometryReader { geometry in
                 let providers = openedUsageProviders
-                let providerGroups = splitUsageProviders(providers)
                 let metrics = openedHeaderMetrics(for: geometry.size.width)
 
                 HStack(spacing: 0) {
-                    usageLaneView(providerGroups.left, alignment: .leading)
-                        .frame(width: metrics.leftUsageWidth, alignment: .leading)
+                    openedHeaderButtons
+                        .frame(width: metrics.leftControlsWidth, alignment: .leading)
 
                     Color.clear
                         .frame(width: metrics.centerGapWidth)
 
-                    HStack(spacing: Self.headerControlSpacing) {
-                        if metrics.rightUsageWidth > 0, !providerGroups.right.isEmpty {
-                            usageLaneView(providerGroups.right, alignment: .trailing)
-                                .frame(width: metrics.rightUsageWidth, alignment: .trailing)
-                        }
-                        openedHeaderButtons
-                    }
-                    .frame(width: metrics.rightLaneWidth, alignment: .trailing)
+                    usageLaneView(providers, alignment: .trailing)
+                        .frame(width: metrics.rightUsageWidth, alignment: .trailing)
                 }
                 .padding(.horizontal, openedHeaderHorizontalPadding)
                 .padding(.top, Self.headerTopPadding)
             }
         } else {
             HStack(spacing: 12) {
-                openedUsageSummary
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
                 openedHeaderButtons
+
+                openedUsageSummary
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.leading, openedHeaderHorizontalPadding)
             .padding(.trailing, openedHeaderHorizontalPadding)
@@ -377,10 +370,11 @@ struct IslandPanelView: View {
     private var openedHeaderButtons: some View {
         HStack(spacing: Self.headerControlSpacing) {
             headerIconButton(
-                systemName: model.isSoundMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                tint: model.isSoundMuted ? .orange.opacity(0.92) : .white.opacity(0.62)
+                systemName: "power",
+                tint: .white.opacity(0.62),
+                accessibilityLabel: model.lang.t("island.quit.confirmTitle")
             ) {
-                model.toggleSoundMuted()
+                showingQuitConfirmation = true
             }
 
             headerIconButton(systemName: "gearshape.fill", tint: .white.opacity(0.62)) {
@@ -388,11 +382,10 @@ struct IslandPanelView: View {
             }
 
             headerIconButton(
-                systemName: "power",
-                tint: .white.opacity(0.62),
-                accessibilityLabel: model.lang.t("island.quit.confirmTitle")
+                systemName: model.isSoundMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                tint: model.isSoundMuted ? .orange.opacity(0.92) : .white.opacity(0.62)
             ) {
-                showingQuitConfirmation = true
+                model.toggleSoundMuted()
             }
         }
     }
@@ -1063,25 +1056,6 @@ struct IslandPanelView: View {
         return providers
     }
 
-    private func splitUsageProviders(
-        _ providers: [UsageProviderPresentation]
-    ) -> (left: [UsageProviderPresentation], right: [UsageProviderPresentation]) {
-        switch providers.count {
-        case 0:
-            return ([], [])
-        case 1:
-            return ([providers[0]], [])
-        case 2:
-            return ([providers[0]], [providers[1]])
-        default:
-            let splitIndex = Int(ceil(Double(providers.count) / 2.0))
-            return (
-                Array(providers.prefix(splitIndex)),
-                Array(providers.dropFirst(splitIndex))
-            )
-        }
-    }
-
     @ViewBuilder
     private func usageLaneView(
         _ providers: [UsageProviderPresentation],
@@ -1104,13 +1078,10 @@ struct IslandPanelView: View {
         let contentWidth = max(0, totalWidth - (horizontalPadding * 2))
         guard usesNotchAwareOpenedHeader,
               let screen = targetOverlayScreen else {
-            let rightLaneWidth = min(contentWidth, openedHeaderButtonsWidth + (contentWidth / 2))
-            let leftUsageWidth = max(0, contentWidth - rightLaneWidth)
             return OpenedHeaderMetrics(
-                leftUsageWidth: leftUsageWidth,
+                leftControlsWidth: min(contentWidth, openedHeaderButtonsWidth),
                 centerGapWidth: 0,
-                rightUsageWidth: max(0, rightLaneWidth - openedHeaderButtonsWidth - Self.headerControlSpacing),
-                rightLaneWidth: rightLaneWidth
+                rightUsageWidth: max(0, contentWidth - openedHeaderButtonsWidth - Self.headerControlSpacing)
             )
         }
 
@@ -1128,27 +1099,20 @@ struct IslandPanelView: View {
         let rawLeftWidth = max(0, min(contentMaxX, leftVisibleMaxX) - contentMinX)
         let rawRightWidth = max(0, contentMaxX - max(contentMinX, rightVisibleMinX))
 
-        let leftUsageWidth = max(0, rawLeftWidth - Self.notchLaneSafetyInset)
-        let rightAvailableWidth = max(0, rawRightWidth - Self.notchLaneSafetyInset)
-        let proposedRightUsageWidth = max(
-            0,
-            rightAvailableWidth - openedHeaderButtonsWidth - Self.headerControlSpacing
+        let leftControlsWidth = min(
+            contentWidth,
+            max(openedHeaderButtonsWidth, rawLeftWidth - Self.notchLaneSafetyInset)
         )
+        let proposedRightUsageWidth = max(0, rawRightWidth - Self.notchLaneSafetyInset)
         let rightUsageWidth = proposedRightUsageWidth >= Self.minimumRightUsageLaneWidth
             ? proposedRightUsageWidth
             : 0
-        let rightLaneWidth = min(
-            contentWidth,
-            openedHeaderButtonsWidth
-                + (rightUsageWidth > 0 ? Self.headerControlSpacing + rightUsageWidth : 0)
-        )
-        let centerGapWidth = max(0, contentWidth - leftUsageWidth - rightLaneWidth)
+        let centerGapWidth = max(0, contentWidth - leftControlsWidth - rightUsageWidth)
 
         return OpenedHeaderMetrics(
-            leftUsageWidth: leftUsageWidth,
+            leftControlsWidth: leftControlsWidth,
             centerGapWidth: centerGapWidth,
-            rightUsageWidth: rightUsageWidth,
-            rightLaneWidth: rightLaneWidth
+            rightUsageWidth: rightUsageWidth
         )
     }
 
@@ -1455,10 +1419,9 @@ private struct UsageWindowPresentation: Identifiable {
 }
 
 private struct OpenedHeaderMetrics {
-    let leftUsageWidth: CGFloat
+    let leftControlsWidth: CGFloat
     let centerGapWidth: CGFloat
     let rightUsageWidth: CGFloat
-    let rightLaneWidth: CGFloat
 }
 
 private struct SessionOverviewItem: Identifiable {

@@ -28,16 +28,17 @@ struct AgentsGridRightSlotTests {
                     usedPercentage: 88,
                     leftPercentage: 12,
                     windowMinutes: 10_080,
-                    resetsAt: nil
+                    resetsAt: .now.addingTimeInterval(3.5 * 24 * 60 * 60)
                 ),
             ]
         )
 
-        guard case let .usage(remaining)? = model.islandClosedRightSlotContent() else {
+        guard case let .usage(remaining, resetTime)? = model.islandClosedRightSlotContent() else {
             Issue.record("Expected official usage right-slot content")
             return
         }
         #expect(remaining == 12)
+        #expect(resetTime == 50)
     }
 
     /// At bulk first observation (e.g. app launch) ties are broken by

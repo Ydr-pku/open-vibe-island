@@ -24,7 +24,10 @@ enum AgentGridCell: Equatable {
 enum IslandRightSlotContent: Equatable {
     case count(Int)              // "×N" badge
     case agents([AgentGridCell]) // balanced grid, one tile per session
-    case usage(Int)              // official account quota remaining
+    case usage(
+        quotaRemainingPercentage: Int,
+        resetTimeRemainingPercentage: Int?
+    )
 }
 
 // MARK: - Right-slot renderers
@@ -42,12 +45,13 @@ struct V6RightSlotView: View {
                 .foregroundStyle(V6Palette.paper.opacity(0.72))
         case .agents(let cells):
             AgentsGridBody(cells: cells)
-        case .usage(let remainingPercentage):
-            Text("\(remainingPercentage)%")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
+        case .usage(let quotaRemainingPercentage, let resetTimeRemainingPercentage):
+            let resetText = resetTimeRemainingPercentage.map { "\($0)%" } ?? "--%"
+            Text("Q\(quotaRemainingPercentage)% T\(resetText)")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                .foregroundStyle(remainingQuotaColor(remainingPercentage))
+                .foregroundStyle(remainingQuotaColor(quotaRemainingPercentage))
         }
     }
 
@@ -68,9 +72,10 @@ struct V6RightSlotView: View {
             let maxRow = rows.max() ?? 0
             let geom = cellGeometry(rowCount: rows.count)
             return CGFloat(maxRow) * geom.cell + CGFloat(max(0, maxRow - 1)) * geom.gap
-        case .usage(let remainingPercentage):
-            let digits = Double(max(1, String(remainingPercentage).count))
-            return CGFloat(14.4 + digits * 7.2)
+        case .usage(let quotaRemainingPercentage, let resetTimeRemainingPercentage):
+            let timeText = resetTimeRemainingPercentage.map(String.init) ?? "--"
+            let characterCount = "Q\(quotaRemainingPercentage)% T\(timeText)%".count
+            return CGFloat(Double(characterCount) * 6.2)
         }
     }
 
@@ -308,7 +313,8 @@ struct V6ClosedPill: View {
     // MARK: MacBook (outer width locked)
 
     private var macbookBody: some View {
-        let halfReserve: CGFloat = 44
+        let rightSlotWidth = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
+        let halfReserve = max(44, rightSlotWidth + pad)
         let outer = halfReserve + physicalNotchWidth + halfReserve
 
         return ZStack {
@@ -339,13 +345,13 @@ enum V6ClosedLayout: Equatable {
 private enum RightSlotKey: Hashable {
     case count(Int)
     case agents(Int)
-    case usage(Int)
+    case usage(Int, Int?)
 
     init(_ content: IslandRightSlotContent) {
         switch content {
         case .count(let n):    self = .count(n)
         case .agents(let cs):  self = .agents(cs.count)
-        case .usage(let value): self = .usage(value)
+        case .usage(let quota, let time): self = .usage(quota, time)
         }
     }
 }

@@ -942,8 +942,11 @@ final class AppModel {
     /// preference and current live state. Returns nil when the preference
     /// is `.none` or there's nothing meaningful to show.
     func islandClosedRightSlotContent() -> IslandRightSlotContent? {
-        if let officialRemainingQuotaPercentage {
-            return .usage(officialRemainingQuotaPercentage)
+        if let usage = officialClosedUsage {
+            return .usage(
+                quotaRemainingPercentage: usage.quotaRemainingPercentage,
+                resetTimeRemainingPercentage: usage.resetTimeRemainingPercentage
+            )
         }
 
         let sessions = surfacedSessions
@@ -980,16 +983,27 @@ final class AppModel {
         }
     }
 
-    private var officialRemainingQuotaPercentage: Int? {
+    private var officialClosedUsage: (
+        quotaRemainingPercentage: Int,
+        resetTimeRemainingPercentage: Int?
+    )? {
         guard codexUsageSnapshot?.sourceFilePath
-                == CodexAppServerClient.rateLimitsSourceIdentifier else {
+                == CodexAppServerClient.rateLimitsSourceIdentifier,
+              let window = codexUsageSnapshot?.windows.max(by: {
+                  $0.usedPercentage < $1.usedPercentage
+              }) else {
             return nil
         }
 
-        return codexUsageSnapshot?.windows
-            .map(\.leftPercentage)
-            .min()
-            .map { Int(min(max($0, 0), 100).rounded()) }
+        return (
+            quotaRemainingPercentage: Int(
+                min(max(window.leftPercentage, 0), 100).rounded()
+            ),
+            resetTimeRemainingPercentage: UsagePercentage.resetTimeRemaining(
+                resetsAt: window.resetsAt,
+                windowMinutes: window.windowMinutes
+            )
+        )
     }
 
     private func stampAgentsGridObservationTickets(for sessions: [AgentSession]) {
