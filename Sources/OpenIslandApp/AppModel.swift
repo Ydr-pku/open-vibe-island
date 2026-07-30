@@ -732,7 +732,7 @@ final class AppModel {
                 }
                 let candidates = threadsByID.values
                     .sorted { $0.updatedAt > $1.updatedAt }
-                    .prefix(50)
+                    .prefix(20)
                 return CodexDesktopIPCUsageLoader.load(threads: Array(candidates))
             }.value
         }

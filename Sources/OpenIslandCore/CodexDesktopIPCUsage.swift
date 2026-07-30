@@ -59,8 +59,9 @@ public enum CodexDesktopIPCUsageLoader {
             return []
         }
 
+        let totalsByThread = client.tokenTotals(threadIDs: threads.map(\.id))
         return threads.compactMap { thread in
-            guard let totalTokens = client.totalTokens(threadID: thread.id),
+            guard let totalTokens = totalsByThread[thread.id],
                   totalTokens > 0 else {
                 return nil
             }
@@ -195,7 +196,7 @@ private final class IPCClient {
             throw POSIXError(error)
         }
 
-        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        var timeout = timeval(tv_sec: 1, tv_usec: 0)
         withUnsafePointer(to: &timeout) {
             _ = setsockopt(
                 descriptor,
@@ -240,25 +241,11 @@ private final class IPCClient {
         return false
     }
 
-    func totalTokens(threadID: String) -> Int64? {
-        guard let clientID else { return nil }
+    func tokenTotals(threadIDs: [String]) -> [String: Int64] {
+        guard let clientID else { return [:] }
 
-        let followingParams: [String: Any] = [
-            "conversationId": threadID,
-            "hostId": "local",
-            "following": true,
-        ]
-        guard send([
-            "type": "broadcast",
-            "method": "thread-stream-following-changed",
-            "sourceClientId": clientID,
-            "version": 1,
-            "params": followingParams,
-        ]) else {
-            return nil
-        }
-        defer {
-            _ = send([
+        let followedThreadIDs = threadIDs.filter { threadID in
+            send([
                 "type": "broadcast",
                 "method": "thread-stream-following-changed",
                 "sourceClientId": clientID,
@@ -266,40 +253,39 @@ private final class IPCClient {
                 "params": [
                     "conversationId": threadID,
                     "hostId": "local",
-                    "following": false,
+                    "following": true,
                 ],
             ])
         }
-
-        let requestID = UUID().uuidString
-        guard send([
-            "type": "request",
-            "requestId": requestID,
-            "sourceClientId": clientID,
-            "version": 1,
-            "method": "thread-follower-load-complete-history",
-            "params": ["conversationId": threadID],
-            "timeoutMs": 30_000,
-        ]) else {
-            return nil
+        defer {
+            for threadID in followedThreadIDs {
+                _ = send([
+                    "type": "broadcast",
+                    "method": "thread-stream-following-changed",
+                    "sourceClientId": clientID,
+                    "version": 1,
+                    "params": [
+                        "conversationId": threadID,
+                        "hostId": "local",
+                        "following": false,
+                    ],
+                ])
+            }
         }
 
-        var tokenTotal: Int64?
-        var requestSucceeded = false
+        var totalsByThread: [String: Int64] = [:]
         while let message = receive() {
-            if tokenTotal == nil {
-                tokenTotal = CodexDesktopIPCUsageLoader.tokenTotal(
+            for threadID in followedThreadIDs where totalsByThread[threadID] == nil {
+                totalsByThread[threadID] = CodexDesktopIPCUsageLoader.tokenTotal(
                     from: message,
                     threadID: threadID
                 )
             }
-            if message["type"] as? String == "response",
-               message["requestId"] as? String == requestID {
-                requestSucceeded = message["resultType"] as? String == "success"
+            if totalsByThread.count == followedThreadIDs.count {
                 break
             }
         }
-        return requestSucceeded ? tokenTotal : nil
+        return totalsByThread
     }
 
     private func send(_ object: [String: Any]) -> Bool {
