@@ -47,11 +47,15 @@ struct V6RightSlotView: View {
             AgentsGridBody(cells: cells)
         case .usage(let quotaRemainingPercentage, let resetTimeRemainingPercentage):
             let resetText = resetTimeRemainingPercentage.map { "\($0)%" } ?? "--%"
-            Text("Q\(quotaRemainingPercentage)% T\(resetText)")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .foregroundStyle(remainingQuotaColor(quotaRemainingPercentage))
+            HStack(spacing: 4) {
+                Text("Q\(quotaRemainingPercentage)%")
+                    .foregroundStyle(remainingQuotaColor(quotaRemainingPercentage))
+                Text("T\(resetText)")
+                    .foregroundStyle(.white.opacity(0.68))
+            }
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
         }
     }
 
