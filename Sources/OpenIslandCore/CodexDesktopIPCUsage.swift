@@ -296,10 +296,6 @@ private final class IPCClient {
             if message["type"] as? String == "response",
                message["requestId"] as? String == requestID {
                 requestSucceeded = message["resultType"] as? String == "success"
-                if !requestSucceeded || tokenTotal != nil {
-                    break
-                }
-            } else if requestSucceeded, tokenTotal != nil {
                 break
             }
         }
