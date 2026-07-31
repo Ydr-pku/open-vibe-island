@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import SQLite3
 
-public struct CodexDesktopThreadUsage: Equatable, Sendable {
+public struct CodexDesktopThreadUsage: Equatable, Codable, Sendable {
     public var threadID: String
     public var totalTokens: Int64
     public var updatedAt: Date
@@ -18,6 +18,97 @@ public struct CodexDesktopThreadUsage: Equatable, Sendable {
         self.totalTokens = totalTokens
         self.updatedAt = updatedAt
         self.startedAt = startedAt
+    }
+}
+
+/// Retains token totals that only exist in Codex Desktop's in-memory IPC.
+///
+/// Side tasks do not always produce rollout files. Without this cache, their
+/// contribution disappears from local history as soon as Codex Desktop exits
+/// and the IPC socket becomes unavailable.
+public struct CodexDesktopThreadUsageStore {
+    public let fileURL: URL
+    private let fileManager: FileManager
+
+    public static var defaultFileURL: URL {
+        CodexSessionStore.defaultDirectoryURL
+            .appendingPathComponent("codex-desktop-thread-usage.json")
+    }
+
+    public init(
+        fileURL: URL = Self.defaultFileURL,
+        fileManager: FileManager = .default
+    ) {
+        self.fileURL = fileURL
+        self.fileManager = fileManager
+    }
+
+    public func loadAndMerge(
+        liveUsages: [CodexDesktopThreadUsage],
+        now: Date = .now,
+        retentionDays: Int = 31
+    ) -> [CodexDesktopThreadUsage] {
+        let cachedUsages = load()
+        let cutoff = now.addingTimeInterval(-Double(max(1, retentionDays)) * 86_400)
+        var usagesByThread = Dictionary(
+            uniqueKeysWithValues: cachedUsages
+                .filter { $0.updatedAt >= cutoff && $0.updatedAt <= now }
+                .map { ($0.threadID, $0) }
+        )
+
+        for liveUsage in liveUsages
+            where liveUsage.totalTokens > 0
+                && liveUsage.updatedAt >= cutoff
+                && liveUsage.updatedAt <= now {
+            guard let cachedUsage = usagesByThread[liveUsage.threadID] else {
+                usagesByThread[liveUsage.threadID] = liveUsage
+                continue
+            }
+
+            if liveUsage.totalTokens > cachedUsage.totalTokens
+                || (liveUsage.totalTokens == cachedUsage.totalTokens
+                    && liveUsage.updatedAt > cachedUsage.updatedAt) {
+                usagesByThread[liveUsage.threadID] = liveUsage
+            }
+        }
+
+        let mergedUsages = usagesByThread.values.sorted {
+            if $0.updatedAt == $1.updatedAt {
+                return $0.threadID < $1.threadID
+            }
+            return $0.updatedAt < $1.updatedAt
+        }
+        save(mergedUsages)
+        return mergedUsages
+    }
+
+    private func load() -> [CodexDesktopThreadUsage] {
+        guard fileManager.fileExists(atPath: fileURL.path),
+              let data = try? Data(contentsOf: fileURL) else {
+            return []
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode([CodexDesktopThreadUsage].self, from: data)) ?? []
+    }
+
+    private func save(_ usages: [CodexDesktopThreadUsage]) {
+        let directoryURL = fileURL.deletingLastPathComponent()
+        guard (try? fileManager.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )) != nil else {
+            return
+        }
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(usages) else {
+            return
+        }
+        try? data.write(to: fileURL, options: .atomic)
     }
 }
 

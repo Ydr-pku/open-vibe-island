@@ -457,6 +457,86 @@ struct CodexUsageTests {
     }
 
     @Test
+    func desktopUsageStoreRetainsSideTaskTotalsWhenIPCBecomesUnavailable() throws {
+        let rootURL = temporaryRootURL(named: "codex-desktop-usage-store")
+        let cacheURL = rootURL.appendingPathComponent("desktop-usage.json")
+        let threadID = "019fb0ab-c4d7-77d0-802d-0bcefdb2d789"
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let now = try #require(isoDate("2026-07-31T04:00:00.000Z"))
+        let updatedAt = try #require(isoDate("2026-07-31T03:30:00.000Z"))
+        let startedAt = try #require(isoDate("2026-07-31T01:00:00.000Z"))
+        let store = CodexDesktopThreadUsageStore(fileURL: cacheURL)
+
+        let liveUsages = store.loadAndMerge(
+            liveUsages: [
+                CodexDesktopThreadUsage(
+                    threadID: threadID,
+                    totalTokens: 70_000_000,
+                    updatedAt: updatedAt,
+                    startedAt: startedAt
+                ),
+            ],
+            now: now
+        )
+        let retainedUsages = store.loadAndMerge(liveUsages: [], now: now)
+
+        #expect(liveUsages.map(\.totalTokens) == [70_000_000])
+        #expect(retainedUsages == liveUsages)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
+        let snapshot = CodexLocalUsageLoader.load(
+            fromRootURLs: [],
+            now: now,
+            calendar: calendar,
+            desktopThreadUsages: retainedUsages
+        )
+        #expect(
+            snapshot.dailyBuckets == [
+                CodexUsageHistoryBucket(key: "2026-07-31", tokens: 70_000_000),
+            ]
+        )
+    }
+
+    @Test
+    func desktopUsageStoreDoesNotReplaceCachedTotalWithSmallerLiveValue() throws {
+        let rootURL = temporaryRootURL(named: "codex-desktop-usage-monotonic")
+        let cacheURL = rootURL.appendingPathComponent("desktop-usage.json")
+        let threadID = "019fb0ab-c4d7-77d0-802d-0bcefdb2d789"
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let now = try #require(isoDate("2026-07-31T04:00:00.000Z"))
+        let startedAt = try #require(isoDate("2026-07-31T01:00:00.000Z"))
+        let store = CodexDesktopThreadUsageStore(fileURL: cacheURL)
+
+        _ = store.loadAndMerge(
+            liveUsages: [
+                CodexDesktopThreadUsage(
+                    threadID: threadID,
+                    totalTokens: 70_000_000,
+                    updatedAt: try #require(isoDate("2026-07-31T03:00:00.000Z")),
+                    startedAt: startedAt
+                ),
+            ],
+            now: now
+        )
+        let retainedUsages = store.loadAndMerge(
+            liveUsages: [
+                CodexDesktopThreadUsage(
+                    threadID: threadID,
+                    totalTokens: 5_600_000,
+                    updatedAt: try #require(isoDate("2026-07-31T03:30:00.000Z")),
+                    startedAt: startedAt
+                ),
+            ],
+            now: now
+        )
+
+        #expect(retainedUsages.map(\.totalTokens) == [70_000_000])
+    }
+
+    @Test
     func desktopIPCUsageDecodesSnapshotTokenTotal() throws {
         let threadID = "019fb0ab-c4d7-77d0-802d-0bcefdb2d789"
         let message: [String: Any] = [

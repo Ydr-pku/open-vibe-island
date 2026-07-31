@@ -825,9 +825,11 @@ final class HookInstallationCoordinator {
             guard let self else { return }
             defer { self.codexUsageHistoryRefreshTask = nil }
 
-            let desktopThreadUsages = await self.codexDesktopUsageProvider?() ?? []
+            let liveDesktopThreadUsages = await self.codexDesktopUsageProvider?() ?? []
             async let localSnapshot = Task.detached(priority: .utility) {
-                CodexLocalUsageLoader.load(desktopThreadUsages: desktopThreadUsages)
+                let desktopThreadUsages = CodexDesktopThreadUsageStore()
+                    .loadAndMerge(liveUsages: liveDesktopThreadUsages)
+                return CodexLocalUsageLoader.load(desktopThreadUsages: desktopThreadUsages)
             }.value
 
             if let codexAccountUsageProvider,
