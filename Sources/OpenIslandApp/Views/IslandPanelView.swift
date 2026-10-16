@@ -409,7 +409,9 @@ struct IslandPanelView: View {
 
     private var openedContent: some View {
         VStack(spacing: 8) {
-            if !model.hasAnyInstalledAgent {
+            if !model.hasAnyInstalledAgent,
+               !isNotificationMode,
+               !(model.showCodexUsage && model.hasCodexUsageHistory) {
                 installHooksHint
                     .padding(.horizontal, 18)
                     .padding(.top, 8)
@@ -422,16 +424,8 @@ struct IslandPanelView: View {
                     .padding(.horizontal, sessionListSideInset)
             }
 
-            if model.shouldShowSessionBootstrapPlaceholder {
-                sessionBootstrapPlaceholder
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-            } else if model.islandListSessions.isEmpty {
-                emptyState
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-            } else {
-                sessionList
+            if isNotificationMode {
+                notificationSession
             }
 
         }
@@ -475,111 +469,26 @@ struct IslandPanelView: View {
         .buttonStyle(.plain)
     }
 
-    private var sessionBootstrapPlaceholder: some View {
-        VStack(spacing: 12) {
-            Spacer()
-            ProgressView()
-                .progressViewStyle(.circular)
-                .tint(.white.opacity(0.7))
-                .scaleEffect(0.8)
-            Text(model.lang.t("island.checkingTerminals"))
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.white.opacity(0.58))
-            Text(model.lang.t("island.terminalOwnership"))
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.28))
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 12) {
-            Spacer()
-            Text(model.lang.t("island.noTerminals"))
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.white.opacity(0.4))
-            Text(model.recentSessions.isEmpty
-                ? model.lang.t("island.startAgent")
-                : model.lang.t("island.recentSessions"))
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.25))
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     private var actionableSessionID: String? {
         model.islandSurface.sessionID
     }
 
-    /// Whether the panel was opened by a notification (show only actionable session + footer).
+    /// Completion and attention cards remain available independently of the
+    /// compact usage surface shown when the island is opened manually.
     private var isNotificationMode: Bool {
         model.notchOpenReason == .notification && actionableSessionID != nil
     }
-
-    private static let maxSessionListHeight: CGFloat = 560
 
     private var sessionListSideInset: CGFloat {
         usesNotchAwareOpenedHeader ? 46 : 16
     }
 
-    private var sessionList: some View {
+    private var notificationSession: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            let referenceDate = context.date
-
-            if isNotificationMode {
-                // Notification mode: NO ScrollView — content sizes naturally
-                sessionListContent(referenceDate: referenceDate)
-                    .padding(.vertical, 2)
-                    .onHover { hovering in
-                        if hovering {
-                            model.notePointerInsideIslandSurface()
-                        } else {
-                            model.handlePointerExitedIslandSurface()
-                        }
-                    }
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: NotificationContentHeightKey.self,
-                                value: geo.size.height
-                            )
-                        }
-                    )
-                    .onPreferenceChange(NotificationContentHeightKey.self) { height in
-                        if height > 0 {
-                            model.measuredNotificationContentHeight = height
-                        }
-                    }
-            } else {
-                VStack(spacing: 0) {
-                    sessionPanelHeader(referenceDate: referenceDate)
-
-                    ScrollView(.vertical) {
-                        sessionRowsContent(referenceDate: referenceDate)
-                    }
-                    .scrollIndicators(.hidden)
-                    .scrollBounceBehavior(.basedOnSize)
-
-                    sessionPanelFooter
-                }
-                .padding(.vertical, 2)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func sessionListContent(referenceDate: Date) -> some View {
-        VStack(spacing: 0) {
-            if !isNotificationMode {
-                sessionPanelHeader(referenceDate: referenceDate)
-            }
-
-            if isNotificationMode, let session = model.activeIslandCardSession {
+            if let session = model.activeIslandCardSession {
                 IslandSessionRow(
                     session: session,
-                    referenceDate: referenceDate,
+                    referenceDate: context.date,
                     stateIndicator: model.islandSessionStateIndicator,
                     completedStaleThreshold: model.completedStaleThreshold.seconds,
                     isActionable: true,
@@ -595,54 +504,27 @@ struct IslandPanelView: View {
                     onJump: { model.jumpToSession(session) }
                 )
                 .id(notificationCardIdentity(for: session))
-
-                if model.allSessions.count > 1 {
-                    Button {
-                        let isCompletion = session.phase == .completed
-                        model.expandNotificationToSessionList(clearExpansion: isCompletion)
-                    } label: {
-                        Text(model.lang.t("island.showAll", model.allSessions.count))
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.36))
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.horizontal, sessionListSideInset)
-                            .padding(.top, 6)
-                            .padding(.bottom, 2)
-                    }
-                    .buttonStyle(.plain)
-                }
-            } else {
-                ForEach(model.islandSessionSections) { section in
-                    VStack(alignment: .leading, spacing: 0) {
-                        if model.islandSessionGroup != .none {
-                            sessionSectionHeader(section)
-                        }
-
-                        ForEach(section.sessions) { session in
-                            IslandSessionRow(
-                                session: session,
-                                referenceDate: referenceDate,
-                                stateIndicator: model.islandSessionStateIndicator,
-                                completedStaleThreshold: model.completedStaleThreshold.seconds,
-                                isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
-                                useDrawingGroup: model.notchStatus == .opened,
-                                isInteractive: model.notchStatus == .opened,
-                                sideInset: sessionListSideInset,
-                                lang: model.lang,
-                                onApprove: { model.approvePermission(for: session.id, action: $0) },
-                                onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
-                                onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
-                                    ? { model.replyToSession(session, text: $0) } : nil,
-                                onJump: { model.jumpToSession(session) },
-                                onDismiss: session.isRemote ? { model.dismissSession(session.id) } : nil
-                            )
-                        }
+                .padding(.vertical, 2)
+                .onHover { hovering in
+                    if hovering {
+                        model.notePointerInsideIslandSurface()
+                    } else {
+                        model.handlePointerExitedIslandSurface()
                     }
                 }
-            }
-
-            if !isNotificationMode {
-                sessionPanelFooter
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: NotificationContentHeightKey.self,
+                            value: geo.size.height
+                        )
+                    }
+                )
+                .onPreferenceChange(NotificationContentHeightKey.self) { height in
+                    if height > 0 {
+                        model.measuredNotificationContentHeight = height
+                    }
+                }
             }
         }
     }
@@ -657,73 +539,6 @@ struct IslandPanelView: View {
             return "\(session.id)|completed|\(session.updatedAt.timeIntervalSinceReferenceDate)"
         case .running:
             return "\(session.id)|running"
-        }
-    }
-
-    @ViewBuilder
-    private func sessionRowsContent(referenceDate: Date) -> some View {
-        ForEach(model.islandSessionSections) { section in
-            VStack(alignment: .leading, spacing: 0) {
-                if model.islandSessionGroup != .none {
-                    sessionSectionHeader(section)
-                }
-
-                ForEach(section.sessions) { session in
-                    IslandSessionRow(
-                        session: session,
-                        referenceDate: referenceDate,
-                        stateIndicator: model.islandSessionStateIndicator,
-                        completedStaleThreshold: model.completedStaleThreshold.seconds,
-                        isActionable: session.phase.requiresAttention || session.id == actionableSessionID,
-                        useDrawingGroup: model.notchStatus == .opened,
-                        isInteractive: model.notchStatus == .opened,
-                        sideInset: sessionListSideInset,
-                        lang: model.lang,
-                        onApprove: { model.approvePermission(for: session.id, action: $0) },
-                        onAnswer: { model.answerQuestion(for: session.id, answer: $0) },
-                        onReply: TerminalTextSender.canReply(to: session, enabled: model.completionReplyEnabled)
-                            ? { model.replyToSession(session, text: $0) } : nil,
-                        onJump: { model.jumpToSession(session) },
-                        onDismiss: session.isRemote ? { model.dismissSession(session.id) } : nil
-                    )
-                }
-            }
-        }
-    }
-
-    private func sessionPanelHeader(referenceDate: Date) -> some View {
-        let overview = sessionOverviewItems(referenceDate: referenceDate)
-
-        return HStack(spacing: 8) {
-            Text(lang.t("island.sessionList.title").uppercased())
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                .tracking(1.4)
-                .foregroundStyle(V6Palette.paper.opacity(0.55))
-
-            ViewThatFits(in: .horizontal) {
-                sessionOverviewView(overview, compact: false)
-                sessionOverviewView(overview, compact: true)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, sessionListSideInset)
-        .padding(.trailing, sessionListSideInset)
-        .frame(height: 36)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(.white.opacity(0.055))
-                .frame(height: 1)
-        }
-    }
-
-    private var sessionPanelFooter: some View {
-        Color.clear
-            .frame(height: 10)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(.white.opacity(0.055))
-                .frame(height: 1)
         }
     }
 
@@ -849,122 +664,6 @@ struct IslandPanelView: View {
             components.month ?? 0,
             components.day ?? 0
         )
-    }
-
-    private func sessionOverviewItems(referenceDate: Date) -> [SessionOverviewItem] {
-        let sessions = model.islandListSessions
-        guard !sessions.isEmpty else { return [] }
-
-        let threshold = model.completedStaleThreshold.seconds
-        let waiting = sessions.filter(\.phase.requiresAttention).count
-        let running = sessions.filter { $0.phase == .running }.count
-        let done = sessions.filter {
-            $0.phase == .completed
-                && !isIdleSessionOverviewItem($0, referenceDate: referenceDate, threshold: threshold)
-        }.count
-        let idle = sessions.filter {
-            isIdleSessionOverviewItem($0, referenceDate: referenceDate, threshold: threshold)
-        }.count
-
-        return [
-            SessionOverviewItem(id: "total", title: lang.t("island.sessionOverview.total"), compactTitle: "", count: sessions.count, tint: nil),
-            SessionOverviewItem(id: "waiting", title: lang.t("island.sessionOverview.waiting"), compactTitle: lang.t("island.sessionOverview.waitingCompact"), count: waiting, tint: IslandDesignPalette.Status.waitingAggregate),
-            SessionOverviewItem(id: "running", title: lang.t("island.sessionOverview.running"), compactTitle: lang.t("island.sessionOverview.runningCompact"), count: running, tint: IslandDesignPalette.Status.running),
-            SessionOverviewItem(id: "done", title: lang.t("island.sessionOverview.done"), compactTitle: lang.t("island.sessionOverview.done"), count: done, tint: IslandDesignPalette.Status.completed),
-            SessionOverviewItem(id: "idle", title: lang.t("island.sessionOverview.idle"), compactTitle: lang.t("island.sessionOverview.idle"), count: idle, tint: IslandDesignPalette.Status.idle),
-        ].filter { $0.id == "total" || $0.count > 0 }
-    }
-
-    private func isIdleSessionOverviewItem(
-        _ session: AgentSession,
-        referenceDate: Date,
-        threshold: TimeInterval
-    ) -> Bool {
-        guard session.phase == .completed else { return false }
-        return session.isStaleCompletedForIsland(at: referenceDate, threshold: threshold)
-            || session.islandPresence(at: referenceDate) == .inactive
-    }
-
-    private func sessionOverviewView(_ items: [SessionOverviewItem], compact: Bool) -> some View {
-        HStack(spacing: compact ? 7 : 9) {
-            ForEach(items) { item in
-                sessionOverviewMetric(item, compact: compact)
-            }
-        }
-        .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private func sessionOverviewMetric(_ item: SessionOverviewItem, compact: Bool) -> some View {
-        HStack(spacing: 4) {
-            if let tint = item.tint {
-                Circle()
-                    .fill(tint)
-                    .frame(width: 5.5, height: 5.5)
-            }
-
-            Text(sessionOverviewMetricTitle(item, compact: compact))
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(item.tint == nil ? V6Palette.paper.opacity(0.34) : V6Palette.paper.opacity(0.48))
-        }
-    }
-
-    private func sessionOverviewMetricTitle(_ item: SessionOverviewItem, compact: Bool) -> String {
-        if item.id == "total" {
-            return compact ? "\(item.count)" : "\(item.count) \(item.title)"
-        }
-
-        return "\(item.count) \(compact ? item.compactTitle : item.title)"
-    }
-
-    private func sessionSectionHeader(_ section: IslandSessionSection) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(sectionTint(for: section))
-                .frame(width: 7, height: 7)
-            Text(sessionSectionTitle(for: section).uppercased())
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                .tracking(0.4)
-                .foregroundStyle(sectionLabelColor(for: section))
-            Text("\(section.sessions.count)")
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(V6Palette.paper.opacity(0.4))
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, sessionListSideInset)
-        .padding(.trailing, sessionListSideInset)
-        .padding(.top, 10)
-        .padding(.bottom, 7)
-        .background(Color.white.opacity(0.008))
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(.white.opacity(0.055))
-                .frame(height: 1)
-        }
-    }
-
-    private func sectionTint(for section: IslandSessionSection) -> Color {
-        guard let first = section.sessions.first else { return IslandDesignPalette.Status.idle }
-        if section.id == "state-idle" { return IslandDesignPalette.Status.idle }
-        return IslandDesignPalette.Status.tint(for: first.phase)
-    }
-
-    private func sessionSectionTitle(for section: IslandSessionSection) -> String {
-        if section.title.hasPrefix("island.") {
-            return lang.t(section.title)
-        }
-        return section.title
-    }
-
-    private func sectionLabelColor(for section: IslandSessionSection) -> Color {
-        switch section.id {
-        case "state-approval":
-            return IslandDesignPalette.Status.waitingForApproval.opacity(0.86)
-        case "state-answer":
-            return IslandDesignPalette.Status.waitingForAnswer.opacity(0.86)
-        default:
-            return V6Palette.paper.opacity(0.7)
-        }
     }
 
     // MARK: - Helpers
@@ -1422,14 +1121,6 @@ private struct OpenedHeaderMetrics {
     let leftControlsWidth: CGFloat
     let centerGapWidth: CGFloat
     let rightUsageWidth: CGFloat
-}
-
-private struct SessionOverviewItem: Identifiable {
-    let id: String
-    let title: String
-    let compactTitle: String
-    let count: Int
-    let tint: Color?
 }
 
 // MARK: - Session row (opened state)

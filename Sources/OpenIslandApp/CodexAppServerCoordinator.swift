@@ -53,12 +53,11 @@ final class CodexAppServerCoordinator {
         ) else {
             return
         }
-        let codexPath = bundleURL
-            .appendingPathComponent("Contents/Resources/codex")
-            .path
-        guard FileManager.default.isExecutableFile(atPath: codexPath) else {
+        guard let codexURL = Self.bundledCodexExecutable(in: bundleURL) else {
+            onStatusMessage?("Could not find the bundled Codex app-server executable.")
             return
         }
+        let codexPath = codexURL.path
 
         connectTask = Task { [weak self] in
             guard let self else { return }
@@ -85,6 +84,22 @@ final class CodexAppServerCoordinator {
                 self.onStatusMessage?("Failed to connect to Codex app-server: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Newer desktop bundles embed a signed CLI app; older Codex versions
+    /// put the executable directly in Resources. Resolve within the selected
+    /// app bundle so usage and notifications use the desktop's own CLI.
+    static func bundledCodexExecutable(
+        in bundleURL: URL,
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> URL? {
+        [
+            "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            "Contents/Resources/codex-cli/bin/codex",
+            "Contents/Resources/codex",
+        ]
+        .map { bundleURL.appendingPathComponent($0) }
+        .first { isExecutable($0.path) }
     }
 
     func readUsageSnapshot() async throws -> CodexUsageSnapshot? {

@@ -229,13 +229,17 @@ def main() -> None:
         require_frame_between(
             overlay_frame,
             width=(520, 780),
-            height=(360, 500),
+            height=(100, 260),
             context="sessionList overlay frame",
         )
-        if len(button_labels) < 3 and report.get("sessionCount", 0) < 3:
-            fail("expected sessionList to expose multiple actionable row buttons")
-        if report.get("sessionCount") != 9:
-            assert_contains_any(text_values, ["sessions hidden", "9 "], "sessionList text values")
+        static_text = labels | text_values | button_labels
+        for row_text in (
+            "Reading IslandPanelView.swift and AppModel.swift",
+            "Expand session detail",
+            "Collapse session detail",
+        ):
+            if any(row_text in value for value in static_text):
+                fail(f"manual usage surface unexpectedly exposes a session row: {row_text}")
 
     elif scenario == "approvalCard":
         if notch_status != "opened":
@@ -275,7 +279,7 @@ def main() -> None:
         require_frame_between(
             overlay_frame,
             width=(520, 780),
-            height=(180, 460),
+            height=(140, 460),
             context="completionCard overlay frame",
         )
         if selected_session_phase(report) != "completed":

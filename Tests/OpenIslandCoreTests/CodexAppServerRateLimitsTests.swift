@@ -3,6 +3,43 @@ import Testing
 @testable import OpenIslandCore
 
 struct CodexAppServerRateLimitsTests {
+    @Test(arguments: [
+        "null",
+        "{}",
+        "{\"lifetimeTokens\":null,\"peakDailyTokens\":null,\"longestRunningTurnSec\":null,\"currentStreakDays\":null,\"longestStreakDays\":null}",
+    ])
+    func unavailableSummaryMetricsDoNotDiscardDailyUsage(summaryJSON: String) throws {
+        let data = Data("""
+            {"summary": \(summaryJSON),
+             "dailyUsageBuckets": [{"startDate":"2026-10-15","tokens":192276509}]}
+            """.utf8)
+
+        let snapshot = try CodexAppServerClient.decodeAccountUsageSnapshot(
+            from: data, capturedAt: .now
+        )
+
+        #expect(snapshot.dailyBuckets == [
+            CodexUsageHistoryBucket(key: "2026-10-15", tokens: 192_276_509),
+        ])
+        #expect(snapshot.summary.lifetimeTokens == nil)
+        #expect(snapshot.summary.peakDailyTokens == nil)
+        #expect(snapshot.summary.longestRunningTurnSeconds == nil)
+        #expect(snapshot.summary.currentStreakDays == nil)
+        #expect(snapshot.summary.longestStreakDays == nil)
+    }
+
+    @Test(arguments: [
+        "{}",
+        "{\"summary\":null,\"dailyUsageBuckets\":null}",
+        "{\"summary\":{\"lifetimeTokens\":0},\"dailyUsageBuckets\":[]}",
+    ])
+    func unavailableDailyBucketsRemainEmpty(response: String) throws {
+        let snapshot = try CodexAppServerClient.decodeAccountUsageSnapshot(
+            from: Data(response.utf8), capturedAt: .now
+        )
+        #expect(snapshot.dailyBuckets.isEmpty)
+    }
+
     @Test
     func decodesLiveAccountRateLimitsIntoUsageSnapshot() throws {
         let data = Data(

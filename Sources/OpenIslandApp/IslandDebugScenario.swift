@@ -28,7 +28,7 @@ enum IslandDebugScenario: String, CaseIterable, Identifiable {
         case .closed:
             "Closed Notch"
         case .sessionList:
-            "Session List"
+            "Usage Overview"
         case .approvalCard:
             "Approval Card"
         case .questionCard:
@@ -45,7 +45,7 @@ enum IslandDebugScenario: String, CaseIterable, Identifiable {
         case .closed:
             "Collapsed idle/running notch with live count and attention affordance."
         case .sessionList:
-            "Manual expanded list with running, active, and inactive session rows."
+            "Compact manual usage surface with session tracking kept in the background."
         case .approvalCard:
             "Auto-expanded permission surface with approve and deny actions."
         case .questionCard:
@@ -77,7 +77,7 @@ enum IslandDebugScenario: String, CaseIterable, Identifiable {
             return IslandDebugSnapshot(
                 title: title,
                 summary: summary,
-                previewHeight: 430,
+                previewHeight: 180,
                 notchStatus: .opened,
                 notchOpenReason: .click,
                 islandSurface: .sessionList(),

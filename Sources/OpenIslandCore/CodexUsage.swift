@@ -72,18 +72,18 @@ public struct CodexUsageHistoryBucket: Equatable, Codable, Sendable, Identifiabl
 }
 
 public struct CodexAccountUsageSummary: Equatable, Codable, Sendable {
-    public var lifetimeTokens: Int64
-    public var peakDailyTokens: Int64
-    public var longestRunningTurnSeconds: Int
-    public var currentStreakDays: Int
-    public var longestStreakDays: Int
+    public var lifetimeTokens: Int64?
+    public var peakDailyTokens: Int64?
+    public var longestRunningTurnSeconds: Int?
+    public var currentStreakDays: Int?
+    public var longestStreakDays: Int?
 
     public init(
-        lifetimeTokens: Int64,
-        peakDailyTokens: Int64,
-        longestRunningTurnSeconds: Int,
-        currentStreakDays: Int,
-        longestStreakDays: Int
+        lifetimeTokens: Int64?,
+        peakDailyTokens: Int64?,
+        longestRunningTurnSeconds: Int?,
+        currentStreakDays: Int?,
+        longestStreakDays: Int?
     ) {
         self.lifetimeTokens = lifetimeTokens
         self.peakDailyTokens = peakDailyTokens

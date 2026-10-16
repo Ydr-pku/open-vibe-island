@@ -114,6 +114,9 @@ final class HookInstallationCoordinator {
     private var codexUsageHistoryRefreshTask: Task<Void, Never>?
 
     @ObservationIgnored
+    private var codexAccountUsageRefreshTask: Task<Void, Never>?
+
+    @ObservationIgnored
     private var relativeTimestampFormatter: RelativeDateTimeFormatter {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
@@ -819,6 +822,9 @@ final class HookInstallationCoordinator {
     }
 
     func refreshCodexUsageHistoryState() {
+        // Account history must refresh even while local IPC is still collecting
+        // thread totals, including when the app-server finishes connecting.
+        refreshCodexAccountUsageHistoryState()
         guard codexUsageHistoryRefreshTask == nil else { return }
 
         codexUsageHistoryRefreshTask = Task { [weak self] in
@@ -832,12 +838,23 @@ final class HookInstallationCoordinator {
                 return CodexLocalUsageLoader.load(desktopThreadUsages: desktopThreadUsages)
             }.value
 
-            if let codexAccountUsageProvider,
-               let officialSnapshot = try? await codexAccountUsageProvider() {
-                self.codexAccountUsageSnapshot = officialSnapshot
-            }
             self.codexLocalUsageSnapshot = await localSnapshot
             self.onCodexUsageHistoryUpdated?()
+        }
+    }
+
+    private func refreshCodexAccountUsageHistoryState() {
+        guard codexAccountUsageRefreshTask == nil,
+              let codexAccountUsageProvider else { return }
+
+        codexAccountUsageRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.codexAccountUsageRefreshTask = nil }
+
+            if let snapshot = try? await codexAccountUsageProvider() {
+                self.codexAccountUsageSnapshot = snapshot
+                self.onCodexUsageHistoryUpdated?()
+            }
         }
     }
 

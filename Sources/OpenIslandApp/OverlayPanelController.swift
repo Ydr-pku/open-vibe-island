@@ -10,13 +10,6 @@ final class OverlayPanelController {
     private static let preferredNotificationPanelWidth: CGFloat = 620
     private static let openedContentWidthPadding: CGFloat = 0
     private static let openedContentBottomPadding: CGFloat = 0
-    /// Must match `IslandPanelView.maxSessionListHeight` — the AutoHeightScrollView cap.
-    private static let maxSessionListHeight: CGFloat = 560
-    private static let maxVisibleSessionRows: Int = 6
-    private static let openedRowSpacing: CGFloat = 0
-    // Content padding top + scroll padding + v8 list header/footer + bottom inset.
-    // Rows are now full-width scan rows, so the old inter-card spacing is gone.
-    private static let openedContentVerticalInsets: CGFloat = 84
     private static let notificationMeasuredContentPadding: CGFloat = 8
     private static let notificationEstimatedVerticalInsets: CGFloat = 36
     private static let openedEmptyStateHeight: CGFloat = 108
@@ -506,9 +499,6 @@ final class OverlayPanelController {
 
     private func openedContentHeight(for model: AppModel) -> CGFloat {
         let now = Date.now
-        let visibleSessions = openedVisibleSessions(
-            sessions: model.islandListSessions
-        )
         let actionableID = model.islandSurface.sessionID
         let isNotificationMode = model.notchOpenReason == .notification && actionableID != nil
         let usageHistoryHeight: CGFloat = model.showCodexUsage
@@ -517,42 +507,25 @@ final class OverlayPanelController {
             ? Self.usageHistoryOverviewHeight
             : 0
 
-        if visibleSessions.isEmpty {
-            return Self.openedEmptyStateHeight + usageHistoryHeight
+        if !isNotificationMode {
+            // Manual expansion shows usage only, regardless of tracked sessions.
+            return max(Self.openedEmptyStateHeight, usageHistoryHeight)
         }
 
-        if isNotificationMode {
-            // Use SwiftUI-measured height when available (accurate after first render).
-            if model.measuredNotificationContentHeight > 0 {
-                return model.measuredNotificationContentHeight + Self.notificationMeasuredContentPadding
-            }
-            // First render: estimate from the actionable session's content so the
-            // initial window is close to the final size. This avoids a large blank
-            // panel flash (the previous 500pt fallback) and reduces the chance of
-            // a measurement→reposition cycle.
-            if let actionableID,
-               let session = model.state.session(id: actionableID) {
-                let rowHeight = session.estimatedIslandRowHeight(at: now)
-                let bodyHeight = actionableBodyHeight(for: session, model: model)
-                return rowHeight + bodyHeight + Self.notificationEstimatedVerticalInsets
-            }
-            return 300
+        // Use SwiftUI-measured height when available (accurate after first render).
+        if model.measuredNotificationContentHeight > 0 {
+            return model.measuredNotificationContentHeight + Self.notificationMeasuredContentPadding
         }
-
-        let rowHeights = visibleSessions.map { session -> CGFloat in
-            if session.id == actionableID {
-                return session.estimatedIslandRowHeight(at: now)
-                    + actionableBodyHeight(for: session, model: model)
-            }
-            return session.estimatedIslandRowHeight(at: now)
+        // First render: estimate from the actionable session's content so the
+        // initial window is close to the final size. This avoids a large blank
+        // panel flash and a measurement/reposition cycle.
+        if let actionableID,
+           let session = model.state.session(id: actionableID) {
+            let rowHeight = session.estimatedIslandRowHeight(at: now)
+            let bodyHeight = actionableBodyHeight(for: session, model: model)
+            return rowHeight + bodyHeight + Self.notificationEstimatedVerticalInsets
         }
-
-        let rowsHeight = rowHeights.reduce(CGFloat.zero, +)
-        let spacingHeight = CGFloat(max(0, rowHeights.count - 1)) * Self.openedRowSpacing
-        let listHeight = rowsHeight + spacingHeight
-        // Cap to match AutoHeightScrollView's maxHeight in IslandPanelView.
-        let cappedListHeight = min(listHeight, Self.maxSessionListHeight)
-        return cappedListHeight + Self.openedContentVerticalInsets + usageHistoryHeight
+        return 300
     }
 
     /// Additional height for the actionable session's inline action area.
@@ -660,10 +633,6 @@ final class OverlayPanelController {
         // Use a smaller minimum to avoid blank space when content is short
         let minHeight: CGFloat = Self.completionCardChromeHeight + 20
         return min(Self.completionCardMaxHeight, max(minHeight, estimatedHeight))
-    }
-
-    private func openedVisibleSessions(sessions: [AgentSession]) -> [AgentSession] {
-        Array(sessions.prefix(Self.maxVisibleSessionRows))
     }
 
     // MARK: - Event reposting

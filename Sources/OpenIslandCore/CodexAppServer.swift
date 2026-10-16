@@ -103,11 +103,11 @@ private struct CodexAccountRateLimitWindow: Decodable {
 
 private struct CodexAccountUsageReadResult: Decodable {
     struct Summary: Decodable {
-        let lifetimeTokens: Int64
-        let peakDailyTokens: Int64
-        let longestRunningTurnSec: Int
-        let currentStreakDays: Int
-        let longestStreakDays: Int
+        let lifetimeTokens: Int64?
+        let peakDailyTokens: Int64?
+        let longestRunningTurnSec: Int?
+        let currentStreakDays: Int?
+        let longestStreakDays: Int?
     }
 
     struct DailyBucket: Decodable {
@@ -115,8 +115,8 @@ private struct CodexAccountUsageReadResult: Decodable {
         let tokens: Int64
     }
 
-    let summary: Summary
-    let dailyUsageBuckets: [DailyBucket]
+    let summary: Summary?
+    let dailyUsageBuckets: [DailyBucket]?
 }
 
 // MARK: - Notifications
@@ -270,13 +270,13 @@ public final class CodexAppServerClient: @unchecked Sendable {
         let result = try JSONDecoder().decode(CodexAccountUsageReadResult.self, from: data)
         return CodexAccountUsageSnapshot(
             summary: CodexAccountUsageSummary(
-                lifetimeTokens: result.summary.lifetimeTokens,
-                peakDailyTokens: result.summary.peakDailyTokens,
-                longestRunningTurnSeconds: result.summary.longestRunningTurnSec,
-                currentStreakDays: result.summary.currentStreakDays,
-                longestStreakDays: result.summary.longestStreakDays
+                lifetimeTokens: result.summary?.lifetimeTokens,
+                peakDailyTokens: result.summary?.peakDailyTokens,
+                longestRunningTurnSeconds: result.summary?.longestRunningTurnSec,
+                currentStreakDays: result.summary?.currentStreakDays,
+                longestStreakDays: result.summary?.longestStreakDays
             ),
-            dailyBuckets: result.dailyUsageBuckets.map {
+            dailyBuckets: (result.dailyUsageBuckets ?? []).map {
                 CodexUsageHistoryBucket(key: $0.startDate, tokens: $0.tokens)
             },
             capturedAt: capturedAt

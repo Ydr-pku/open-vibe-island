@@ -49,7 +49,7 @@ The validator also checks that launch reaches a complete bootstrap milestone, th
 For the deterministic scenario suite, the harness now performs these semantic checks against the accessibility snapshot:
 
 - `closed`: compact geometry remains in the closed-notch range
-- `sessionList`: expanded geometry is present and the list exposes multiple actionable rows
+- `sessionList`: manual expansion stays compact and omits session statistics and rows; completion and attention cards remain separate notification surfaces
 - `approvalCard`: overlay stays open and the accessibility tree contains `Deny` plus an allow-style button label
 - `questionCard`: overlay stays open and the three answer choices appear as buttons
 - `completionCard`: overlay stays open and exposes the `Done` completion copy
