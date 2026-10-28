@@ -255,10 +255,14 @@ struct V6ClosedPill: View {
     var minWidth: CGFloat = 70
     var npuMonitor: MonitorStore? = nil
 
+    private var leftWidth: CGFloat { NPUIslandPresentation.compactWidth(for: npuMonitor) }
+
     static func contentWidth(layout: V6ClosedLayout, height: CGFloat, physicalNotchWidth: CGFloat,
-                             label: String?, rightSlot: IslandRightSlotContent?, minWidth: CGFloat = 70) -> CGFloat {
+                             label: String?, rightSlot: IslandRightSlotContent?,
+                             leftWidth: CGFloat = NPUIslandPresentation.compactWidth(state: .disconnected),
+                             minWidth: CGFloat = 70) -> CGFloat {
         let pad = height / 2
-        let leftW = NPUIslandPresentation.compactWidth
+        let leftW = leftWidth
         let rightW = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
         if layout == .macbook {
             return physicalNotchWidth + 2 * max(44, max(leftW, rightW) + pad)
@@ -275,7 +279,7 @@ struct V6ClosedPill: View {
             Text("NPU")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.4))
-                .frame(width: NPUIslandPresentation.compactWidth, alignment: .leading)
+                .frame(width: leftWidth, alignment: .leading)
         }
     }
 
@@ -298,7 +302,7 @@ struct V6ClosedPill: View {
     // MARK: External (fluid)
 
     private var externalBody: some View {
-        let glyphW = NPUIslandPresentation.compactWidth
+        let glyphW = leftWidth
         let labelW = label.map { V6CenterLabelView.intrinsicWidth(of: $0) } ?? 0
         let rightW = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
 
@@ -337,6 +341,7 @@ struct V6ClosedPill: View {
                 AnyHashable(label ?? ""),
                 AnyHashable(rightSlot.map(RightSlotKey.init) ?? .none),
                 AnyHashable(mode),
+                AnyHashable(leftWidth),
             ])
         )
     }
@@ -345,7 +350,7 @@ struct V6ClosedPill: View {
 
     private var macbookBody: some View {
         let outer = Self.contentWidth(layout: .macbook, height: height, physicalNotchWidth: physicalNotchWidth,
-                                      label: nil, rightSlot: rightSlot)
+                                      label: nil, rightSlot: rightSlot, leftWidth: leftWidth)
 
         return ZStack {
             V6ClosedPillShape()
@@ -353,7 +358,7 @@ struct V6ClosedPill: View {
 
             HStack(spacing: 0) {
                 leftContent
-                    .frame(width: NPUIslandPresentation.compactWidth, height: 24)
+                    .frame(width: leftWidth, height: 24)
 
                 Spacer(minLength: 0)
 
@@ -364,6 +369,7 @@ struct V6ClosedPill: View {
             .padding(.horizontal, pad)
         }
         .frame(width: outer, height: height)
+        .animation(.easeInOut(duration: 0.2), value: leftWidth)
     }
 }
 

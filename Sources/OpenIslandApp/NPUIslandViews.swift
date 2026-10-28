@@ -3,9 +3,36 @@ import SwiftUI
 
 /// Shared sizing and freshness rules for both the panel and its hit area.
 enum NPUIslandPresentation {
-    static let compactWidth: CGFloat = 112
     static let rowHeight: CGFloat = 24
     static let visibleRows = 6
+    private static func textWidth(_ value: String) -> CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
+        return ceil((value as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    static func coreLabel(_ value: Double?) -> String {
+        "Core\(percentage(value))"
+    }
+
+    static func compactWidth(state: ConnectionState, isDemo: Bool = false,
+                             hbm: Double? = nil, core: Double? = nil) -> CGFloat {
+        switch state {
+        case .connected:
+            let demoWidth: CGFloat = isDemo ? textWidth("D") + 5 : 0
+            return demoWidth + textWidth("HBM\(percentage(hbm))") + 5 + textWidth(coreLabel(core)) + 2
+        case .connecting, .failed:
+            return 14 + 5 + textWidth("NPU") + 2
+        case .disconnected:
+            return textWidth("NPU") + 2
+        }
+    }
+
+    @MainActor
+    static func compactWidth(for monitor: MonitorStore?) -> CGFloat {
+        guard let monitor else { return compactWidth(state: .disconnected) }
+        return compactWidth(state: monitor.state, isDemo: monitor.isDemo,
+                            hbm: monitor.snapshot?.hbmPercent, core: monitor.snapshot?.averageUtilization)
+    }
 
     static func isFresh(state: ConnectionState, isPaused: Bool, lastUpdated: Date?, refreshInterval: Double, at date: Date) -> Bool {
         guard state == .connected, !isPaused, let lastUpdated else { return false }
@@ -38,15 +65,15 @@ struct NPUClosedStatusView: View {
                         if monitor.isDemo { Text("D").foregroundStyle(.orange) }
                         Text("HBM\(NPUIslandPresentation.percentage(fresh ? monitor.snapshot?.hbmPercent : nil))")
                             .foregroundStyle(fresh ? .purple.opacity(0.95) : .white.opacity(0.4))
-                        Text("AI\(NPUIslandPresentation.percentage(fresh ? monitor.snapshot?.averageUtilization : nil))")
+                        Text(NPUIslandPresentation.coreLabel(fresh ? monitor.snapshot?.averageUtilization : nil))
                             .foregroundStyle(fresh ? .cyan.opacity(0.95) : .white.opacity(0.4))
                     }
                 } else {
                     HStack(spacing: 5) {
                         if monitor.state == .connecting {
-                            ProgressView().controlSize(.mini)
+                            ProgressView().controlSize(.mini).frame(width: 14, height: 14)
                         } else if monitor.state == .failed {
-                            Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+                            Image(systemName: "exclamationmark.circle").foregroundStyle(.orange).frame(width: 14)
                         }
                         Text("NPU").foregroundStyle(.white.opacity(0.4))
                     }
@@ -55,7 +82,7 @@ struct NPUClosedStatusView: View {
             .font(.system(size: 10, weight: .bold, design: .monospaced))
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-            .frame(width: NPUIslandPresentation.compactWidth, alignment: .leading)
+            .frame(width: NPUIslandPresentation.compactWidth(for: monitor), alignment: .leading)
             .help(LanguageManager.shared.t("npu.compact.help"))
             .accessibilityLabel(LanguageManager.shared.t("npu.compact.help"))
         }
