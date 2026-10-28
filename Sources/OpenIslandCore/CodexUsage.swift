@@ -113,15 +113,20 @@ public struct CodexLocalUsageSnapshot: Equatable, Codable, Sendable {
     public var dailyBuckets: [CodexUsageHistoryBucket]
     public var hourlyBuckets: [CodexUsageHistoryBucket]
     public var capturedAt: Date
+    /// Remote cumulative history whose generation day cannot be recovered.
+    /// Excluded from daily/hourly charts rather than assigned to the last day.
+    public var unattributedRemoteTokens: Int64?
 
     public init(
         dailyBuckets: [CodexUsageHistoryBucket],
         hourlyBuckets: [CodexUsageHistoryBucket],
-        capturedAt: Date
+        capturedAt: Date,
+        unattributedRemoteTokens: Int64? = nil
     ) {
         self.dailyBuckets = dailyBuckets
         self.hourlyBuckets = hourlyBuckets
         self.capturedAt = capturedAt
+        self.unattributedRemoteTokens = unattributedRemoteTokens
     }
 }
 
@@ -439,6 +444,7 @@ public enum CodexLocalUsageLoader {
         var daily: [String: Int64] = [:]
         var hourly: [String: Int64] = [:]
         var rolloutTokensByThread: [String: Int64] = [:]
+        var unattributedRemoteTokens: Int64 = 0
 
         for rootURL in rootURLs {
             guard fileManager.fileExists(atPath: rootURL.path),
@@ -475,15 +481,58 @@ public enum CodexLocalUsageLoader {
             }
         }
 
+        // A handed-off thread can exist in both hosts' IPC caches, and its
+        // rollout may remain local. These are cumulative counters for the same
+        // logical thread, so take the largest total once before subtracting
+        // rollout tokens. Host routing stays separate in the persistent cache.
+        var desktopUsagesByThread: [String: CodexDesktopThreadUsage] = [:]
         for usage in desktopThreadUsages {
-            guard usage.startedAt >= firstDay,
-                  usage.updatedAt >= firstDay,
+            let activityDate = usage.observedAt ?? usage.updatedAt
+            guard usage.totalTokens > 0, activityDate >= firstDay, activityDate <= now,
+                  usage.updatedAt <= now, usage.startedAt <= usage.updatedAt,
+                  usage.hostID != "local" || usage.startedAt >= firstDay else { continue }
+            let existing = desktopUsagesByThread[usage.threadID]
+            if existing == nil || usage.totalTokens > existing!.totalTokens
+                || (usage.totalTokens == existing!.totalTokens && usage.intervals != nil && existing!.intervals == nil)
+                || (usage.totalTokens == existing!.totalTokens && (usage.intervals != nil) == (existing!.intervals != nil)
+                    && usage.updatedAt > existing!.updatedAt) {
+                desktopUsagesByThread[usage.threadID] = usage
+            }
+        }
+        for usage in desktopUsagesByThread.values {
+            guard (usage.observedAt ?? usage.updatedAt) >= firstDay,
                   usage.updatedAt <= now else {
                 continue
             }
             let alreadyCounted = rolloutTokensByThread[usage.threadID, default: 0]
             let missingTokens = max(0, usage.totalTokens - alreadyCounted)
             guard missingTokens > 0 else { continue }
+
+            if usage.hostID != "local" {
+                let intervals = usage.intervals ?? [CodexDesktopUsageInterval(
+                    startedAt: usage.startedAt, endedAt: usage.updatedAt, tokens: usage.totalTokens
+                )]
+                var rolloutRemainder = alreadyCounted
+                for interval in intervals.sorted(by: { $0.endedAt < $1.endedAt }) {
+                    let covered = min(rolloutRemainder, max(0, interval.tokens))
+                    rolloutRemainder -= covered
+                    let tokens = max(0, interval.tokens - covered)
+                    guard tokens > 0, interval.endedAt >= firstDay, interval.endedAt <= now else { continue }
+                    guard interval.startedAt <= interval.endedAt,
+                          calendar.isDate(interval.startedAt, inSameDayAs: interval.endedAt) else {
+                        unattributedRemoteTokens += tokens
+                        continue
+                    }
+                    daily[dayKey(for: interval.endedAt, calendar: calendar), default: 0] += tokens
+                    if interval.endedAt >= today,
+                       calendar.isDate(interval.startedAt, equalTo: interval.endedAt, toGranularity: .hour) {
+                        let hour = calendar.component(.hour, from: interval.endedAt)
+                        hourly[String(format: "%02d", hour), default: 0] += tokens
+                    }
+                }
+                continue
+            }
+            guard usage.startedAt >= firstDay else { continue }
 
             daily[dayKey(for: usage.updatedAt, calendar: calendar), default: 0] += missingTokens
             if usage.updatedAt >= today {
@@ -499,7 +548,8 @@ public enum CodexLocalUsageLoader {
             hourlyBuckets: hourly
                 .map { CodexUsageHistoryBucket(key: $0.key, tokens: $0.value) }
                 .sorted { $0.key < $1.key },
-            capturedAt: now
+            capturedAt: now,
+            unattributedRemoteTokens: unattributedRemoteTokens > 0 ? unattributedRemoteTokens : nil
         )
     }
 

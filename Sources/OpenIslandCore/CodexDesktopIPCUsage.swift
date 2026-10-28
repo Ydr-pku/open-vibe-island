@@ -2,22 +2,60 @@ import Darwin
 import Foundation
 import SQLite3
 
+public struct CodexDesktopUsageInterval: Equatable, Codable, Sendable {
+    public var startedAt: Date
+    public var endedAt: Date
+    public var tokens: Int64
+
+    public init(startedAt: Date, endedAt: Date, tokens: Int64) {
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.tokens = tokens
+    }
+}
+
 public struct CodexDesktopThreadUsage: Equatable, Codable, Sendable {
     public var threadID: String
     public var totalTokens: Int64
     public var updatedAt: Date
     public var startedAt: Date
+    public var hostID: String
+    public var intervals: [CodexDesktopUsageInterval]?
+    public var observedAt: Date?
+
+    public var identityKey: String { "\(hostID)\n\(threadID)" }
 
     public init(
         threadID: String,
         totalTokens: Int64,
         updatedAt: Date,
-        startedAt: Date
+        startedAt: Date,
+        hostID: String = "local",
+        intervals: [CodexDesktopUsageInterval]? = nil,
+        observedAt: Date? = nil
     ) {
         self.threadID = threadID
         self.totalTokens = totalTokens
         self.updatedAt = updatedAt
         self.startedAt = startedAt
+        self.hostID = hostID
+        self.intervals = intervals
+        self.observedAt = observedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case threadID, totalTokens, updatedAt, startedAt, hostID, intervals, observedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        threadID = try values.decode(String.self, forKey: .threadID)
+        totalTokens = try values.decode(Int64.self, forKey: .totalTokens)
+        updatedAt = try values.decode(Date.self, forKey: .updatedAt)
+        startedAt = try values.decode(Date.self, forKey: .startedAt)
+        hostID = try values.decodeIfPresent(String.self, forKey: .hostID) ?? "local"
+        intervals = try values.decodeIfPresent([CodexDesktopUsageInterval].self, forKey: .intervals)
+        observedAt = try values.decodeIfPresent(Date.self, forKey: .observedAt)
     }
 }
 
@@ -50,36 +88,67 @@ public struct CodexDesktopThreadUsageStore {
     ) -> [CodexDesktopThreadUsage] {
         let cachedUsages = load()
         let cutoff = now.addingTimeInterval(-Double(max(1, retentionDays)) * 86_400)
-        var usagesByThread = Dictionary(
-            uniqueKeysWithValues: cachedUsages
-                .filter { $0.updatedAt >= cutoff && $0.updatedAt <= now }
-                .map { ($0.threadID, $0) }
-        )
+        var usagesByThread: [String: CodexDesktopThreadUsage] = [:]
+        for usage in cachedUsages where (usage.observedAt ?? usage.updatedAt) >= cutoff
+            && (usage.observedAt ?? usage.updatedAt) <= now && usage.updatedAt <= now
+            && usage.startedAt <= usage.updatedAt {
+            if usage.totalTokens >= (usagesByThread[usage.identityKey]?.totalTokens ?? 0) {
+                usagesByThread[usage.identityKey] = usage
+            }
+        }
 
         for liveUsage in liveUsages
             where liveUsage.totalTokens > 0
-                && liveUsage.updatedAt >= cutoff
+                && (liveUsage.hostID != "local" || liveUsage.updatedAt >= cutoff)
                 && liveUsage.updatedAt <= now {
-            guard let cachedUsage = usagesByThread[liveUsage.threadID] else {
-                usagesByThread[liveUsage.threadID] = liveUsage
+            guard let cachedUsage = usagesByThread[liveUsage.identityKey] else {
+                usagesByThread[liveUsage.identityKey] = recordingIntervals(liveUsage, after: nil, now: now)
                 continue
             }
 
             if liveUsage.totalTokens > cachedUsage.totalTokens
+                || (liveUsage.hostID != "local" && liveUsage.totalTokens == cachedUsage.totalTokens)
                 || (liveUsage.totalTokens == cachedUsage.totalTokens
                     && liveUsage.updatedAt > cachedUsage.updatedAt) {
-                usagesByThread[liveUsage.threadID] = liveUsage
+                usagesByThread[liveUsage.identityKey] = recordingIntervals(liveUsage, after: cachedUsage, now: now)
             }
         }
 
         let mergedUsages = usagesByThread.values.sorted {
             if $0.updatedAt == $1.updatedAt {
-                return $0.threadID < $1.threadID
+                return $0.identityKey < $1.identityKey
             }
             return $0.updatedAt < $1.updatedAt
         }
         save(mergedUsages)
         return mergedUsages
+    }
+
+    private func recordingIntervals(_ live: CodexDesktopThreadUsage, after cached: CodexDesktopThreadUsage?, now: Date) -> CodexDesktopThreadUsage {
+        guard live.hostID != "local" else { return live }
+        var result = live
+        result.observedAt = now
+        var intervals = cached?.intervals ?? cached.map {
+            [CodexDesktopUsageInterval(startedAt: $0.startedAt, endedAt: $0.updatedAt, tokens: $0.totalTokens)]
+        } ?? []
+        let delta = live.totalTokens - (cached?.totalTokens ?? 0)
+        if delta > 0 {
+            let start = cached.map { $0.observedAt ?? $0.updatedAt } ?? live.startedAt
+            let end = cached == nil ? live.updatedAt : now
+            let interval = CodexDesktopUsageInterval(startedAt: start, endedAt: end, tokens: delta)
+            // Compact frequent samples within a single hour without losing
+            // daily/hourly attribution, keeping this cache bounded in practice.
+            if let last = intervals.last,
+               Calendar.current.isDate(last.startedAt, equalTo: interval.endedAt, toGranularity: .hour),
+               last.endedAt <= interval.endedAt {
+                intervals[intervals.count - 1].endedAt = interval.endedAt
+                intervals[intervals.count - 1].tokens += delta
+            } else {
+                intervals.append(interval)
+            }
+        }
+        result.intervals = intervals
+        return result
     }
 
     private func load() -> [CodexDesktopThreadUsage] {
@@ -123,11 +192,15 @@ public enum CodexDesktopIPCUsageLoader {
         public var id: String
         public var updatedAt: Date
         public var startedAt: Date
+        public var hostID: String
 
-        public init(id: String, updatedAt: Date, startedAt: Date) {
+        public var identityKey: String { "\(hostID)\n\(id)" }
+
+        public init(id: String, updatedAt: Date, startedAt: Date, hostID: String = "local") {
             self.id = id
             self.updatedAt = updatedAt
             self.startedAt = startedAt
+            self.hostID = hostID
         }
     }
 
@@ -150,26 +223,15 @@ public enum CodexDesktopIPCUsageLoader {
             return []
         }
 
-        let totalsByThread = client.tokenTotals(threadIDs: threads.map(\.id))
-        return threads.compactMap { thread in
-            guard let totalTokens = totalsByThread[thread.id],
-                  totalTokens > 0 else {
-                return nil
-            }
-            return CodexDesktopThreadUsage(
-                threadID: thread.id,
-                totalTokens: totalTokens,
-                updatedAt: thread.updatedAt,
-                startedAt: thread.startedAt
-            )
-        }
+        return client.tokenTotals(threads: threads)
     }
 
-    static func tokenTotal(from message: [String: Any], threadID: String) -> Int64? {
+    static func tokenTotal(from message: [String: Any], threadID: String, hostID: String = "local") -> Int64? {
         guard message["type"] as? String == "broadcast",
               message["method"] as? String == "thread-stream-state-changed",
               let params = message["params"] as? [String: Any],
               params["conversationId"] as? String == threadID,
+              (params["hostId"] as? String ?? "local") == hostID,
               let change = params["change"] as? [String: Any],
               change["type"] as? String == "snapshot",
               let state = change["conversationState"] as? [String: Any],
@@ -178,11 +240,80 @@ public enum CodexDesktopIPCUsageLoader {
               let number = total["totalTokens"] as? NSNumber else {
             return nil
         }
-        return number.int64Value
+        let value = number.int64Value
+        return value > 0 ? value : nil
+    }
+
+    static func threadUsage(from message: [String: Any], thread: Thread) -> CodexDesktopThreadUsage? {
+        guard let total = tokenTotal(from: message, threadID: thread.id, hostID: thread.hostID),
+              let params = message["params"] as? [String: Any],
+              let change = params["change"] as? [String: Any],
+              let state = change["conversationState"] as? [String: Any] else { return nil }
+        // Desktop's conversation state timestamps are milliseconds, including
+        // remote snapshots. Discovery times are only a local fallback.
+        func date(_ key: String, fallback: Date) -> Date {
+            guard let number = state[key] as? NSNumber, number.doubleValue.isFinite,
+                  number.doubleValue > 0 else { return fallback }
+            return Date(timeIntervalSince1970: number.doubleValue / 1_000)
+        }
+        return CodexDesktopThreadUsage(
+            threadID: thread.id, totalTokens: total,
+            updatedAt: date("updatedAt", fallback: thread.updatedAt),
+            startedAt: date("createdAt", fallback: thread.startedAt), hostID: thread.hostID
+        )
     }
 }
 
 public enum CodexDesktopThreadDiscovery {
+    public static var defaultGlobalStateURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/.codex-global-state.json")
+    }
+
+    /// Reads only thread/project host routing metadata. Remote threads live on
+    /// their execution host, so neither local rollout scans nor logs.sqlite can
+    /// discover their complete IDs. The desktop owns the remote connection.
+    public static func loadRemote(
+        globalStateURL: URL = defaultGlobalStateURL,
+        limit: Int = 50
+    ) -> [CodexDesktopIPCUsageLoader.Thread] {
+        guard let data = try? Data(contentsOf: globalStateURL), data.count <= 16 * 1_024 * 1_024,
+              let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        var projectHosts: [String: String] = [:]
+        for project in state["remote-projects"] as? [[String: Any]] ?? [] {
+            if let id = project["id"] as? String, let host = project["hostId"] as? String {
+                projectHosts[id] = host
+            }
+        }
+        var hostsByThread: [String: String] = [:]
+        for (id, assignment) in state["thread-project-assignments"] as? [String: [String: Any]] ?? [:] {
+            if assignment["projectKind"] as? String == "remote",
+               let projectID = assignment["projectId"] as? String, let host = projectHosts[projectID] {
+                hostsByThread[id] = host
+            }
+        }
+        // Explicit membership routing is newer than legacy project assignment.
+        for (id, host) in state["thread-project-membership-host-ids"] as? [String: String] ?? [:] {
+            hostsByThread[id] = host
+        }
+        return hostsByThread.compactMap { id, host in
+            let digits = id.replacingOccurrences(of: "-", with: "")
+            guard host != "local", !host.isEmpty, host.count <= 2_048,
+                  UUID(uuidString: id) != nil, digits.count == 32,
+                  digits[digits.index(digits.startIndex, offsetBy: 12)] == "7",
+                  let milliseconds = UInt64(digits.prefix(12), radix: 16) else { return nil }
+            let startedAt = Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+            // Old threads may still be active remotely. Their actual latest
+            // update time arrives in the snapshot; UUID age is not an activity
+            // filter. Multi-day baseline totals remain explicitly unattributed.
+            return CodexDesktopIPCUsageLoader.Thread(
+                id: id, updatedAt: startedAt, startedAt: startedAt, hostID: host
+            )
+        }
+        .sorted { $0.startedAt > $1.startedAt }
+        .prefix(max(1, limit)).map { $0 }
+    }
+
     public static var defaultDatabaseURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex/logs_2.sqlite")
@@ -252,12 +383,15 @@ private final class IPCClient {
     private static let maxFrameByteCount = 256 * 1_024 * 1_024
     private let fileDescriptor: Int32
     private var clientID: String?
+    private var readDeadline: Date?
 
     init(socketPath: String) throws {
         let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else {
             throw POSIXError(.ENOTCONN)
         }
+        var noSignal: Int32 = 1
+        _ = setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
 
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
@@ -296,6 +430,7 @@ private final class IPCClient {
                 $0,
                 socklen_t(MemoryLayout<timeval>.size)
             )
+            _ = setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, $0, socklen_t(MemoryLayout<timeval>.size))
         }
         fileDescriptor = descriptor
     }
@@ -316,7 +451,9 @@ private final class IPCClient {
             return false
         }
 
-        while let message = receive() {
+        let deadline = Date().addingTimeInterval(2)
+        readDeadline = deadline
+        while Date() < deadline, let message = receive() {
             guard message["type"] as? String == "response",
                   message["requestId"] as? String == requestID else {
                 continue
@@ -332,51 +469,60 @@ private final class IPCClient {
         return false
     }
 
-    func tokenTotals(threadIDs: [String]) -> [String: Int64] {
-        guard let clientID else { return [:] }
+    func tokenTotals(threads: [CodexDesktopIPCUsageLoader.Thread]) -> [CodexDesktopThreadUsage] {
+        guard let clientID else { return [] }
 
-        let followedThreadIDs = threadIDs.filter { threadID in
+        let followedThreads = threads.filter { thread in
             send([
                 "type": "broadcast",
                 "method": "thread-stream-following-changed",
                 "sourceClientId": clientID,
                 "version": 1,
                 "params": [
-                    "conversationId": threadID,
-                    "hostId": "local",
+                    "conversationId": thread.id,
+                    "hostId": thread.hostID,
                     "following": true,
                 ],
             ])
         }
         defer {
-            for threadID in followedThreadIDs {
+            for thread in followedThreads {
                 _ = send([
                     "type": "broadcast",
                     "method": "thread-stream-following-changed",
                     "sourceClientId": clientID,
                     "version": 1,
                     "params": [
-                        "conversationId": threadID,
-                        "hostId": "local",
+                        "conversationId": thread.id,
+                        "hostId": thread.hostID,
                         "following": false,
                     ],
                 ])
             }
         }
 
-        var totalsByThread: [String: Int64] = [:]
-        while let message = receive() {
-            for threadID in followedThreadIDs where totalsByThread[threadID] == nil {
-                totalsByThread[threadID] = CodexDesktopIPCUsageLoader.tokenTotal(
-                    from: message,
-                    threadID: threadID
-                )
+        var usagesByThread: [String: CodexDesktopThreadUsage] = [:]
+        var receivedIdentities: Set<String> = []
+        let deadline = Date().addingTimeInterval(2)
+        readDeadline = deadline
+        while Date() < deadline, let message = receive() {
+            for thread in followedThreads where !receivedIdentities.contains(thread.identityKey) {
+                if let params = message["params"] as? [String: Any],
+                   params["conversationId"] as? String == thread.id,
+                   (params["hostId"] as? String ?? "local") == thread.hostID,
+                   let change = params["change"] as? [String: Any],
+                   change["type"] as? String == "snapshot" {
+                    receivedIdentities.insert(thread.identityKey)
+                }
+                if let usage = CodexDesktopIPCUsageLoader.threadUsage(from: message, thread: thread) {
+                    usagesByThread[thread.identityKey] = usage
+                }
             }
-            if totalsByThread.count == followedThreadIDs.count {
+            if receivedIdentities.count == followedThreads.count {
                 break
             }
         }
-        return totalsByThread
+        return Array(usagesByThread.values)
     }
 
     private func send(_ object: [String: Any]) -> Bool {
@@ -415,6 +561,7 @@ private final class IPCClient {
                     baseAddress.advanced(by: offset),
                     bytes.count - offset
                 )
+                if written < 0 && errno == EINTR { continue }
                 guard written > 0 else { return false }
                 offset += written
             }
@@ -428,11 +575,13 @@ private final class IPCClient {
             guard let baseAddress = bytes.baseAddress else { return true }
             var offset = 0
             while offset < count {
+                if let readDeadline, Date() >= readDeadline { return false }
                 let readCount = Darwin.read(
                     fileDescriptor,
                     baseAddress.advanced(by: offset),
                     count - offset
                 )
+                if readCount < 0 && errno == EINTR { continue }
                 guard readCount > 0 else { return false }
                 offset += readCount
             }

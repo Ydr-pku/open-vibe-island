@@ -740,7 +740,11 @@ final class AppModel {
                 let candidates = threadsByID.values
                     .sorted { $0.updatedAt > $1.updatedAt }
                     .prefix(20)
-                return CodexDesktopIPCUsageLoader.load(threads: Array(candidates))
+                // A bridge session's isRemote boolean does not identify a
+                // Codex host. Desktop remote routing comes from its own saved
+                // thread/project membership, never from the NPU SSH endpoint.
+                let remoteCandidates = CodexDesktopThreadDiscovery.loadRemote()
+                return CodexDesktopIPCUsageLoader.load(threads: Array(candidates) + remoteCandidates)
             }.value
         }
 
