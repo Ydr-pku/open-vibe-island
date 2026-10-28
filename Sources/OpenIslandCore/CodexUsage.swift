@@ -116,17 +116,21 @@ public struct CodexLocalUsageSnapshot: Equatable, Codable, Sendable {
     /// Remote cumulative history whose generation day cannot be recovered.
     /// Excluded from daily/hourly charts rather than assigned to the last day.
     public var unattributedRemoteTokens: Int64?
+    /// Today's remote usage known by day but not by individual hour.
+    public var unattributedRemoteHourlyTokens: Int64?
 
     public init(
         dailyBuckets: [CodexUsageHistoryBucket],
         hourlyBuckets: [CodexUsageHistoryBucket],
         capturedAt: Date,
-        unattributedRemoteTokens: Int64? = nil
+        unattributedRemoteTokens: Int64? = nil,
+        unattributedRemoteHourlyTokens: Int64? = nil
     ) {
         self.dailyBuckets = dailyBuckets
         self.hourlyBuckets = hourlyBuckets
         self.capturedAt = capturedAt
         self.unattributedRemoteTokens = unattributedRemoteTokens
+        self.unattributedRemoteHourlyTokens = unattributedRemoteHourlyTokens
     }
 }
 
@@ -445,6 +449,7 @@ public enum CodexLocalUsageLoader {
         var hourly: [String: Int64] = [:]
         var rolloutTokensByThread: [String: Int64] = [:]
         var unattributedRemoteTokens: Int64 = 0
+        var unattributedRemoteHourlyTokens: Int64 = 0
 
         for rootURL in rootURLs {
             guard fileManager.fileExists(atPath: rootURL.path),
@@ -524,10 +529,13 @@ public enum CodexLocalUsageLoader {
                         continue
                     }
                     daily[dayKey(for: interval.endedAt, calendar: calendar), default: 0] += tokens
-                    if interval.endedAt >= today,
-                       calendar.isDate(interval.startedAt, equalTo: interval.endedAt, toGranularity: .hour) {
-                        let hour = calendar.component(.hour, from: interval.endedAt)
-                        hourly[String(format: "%02d", hour), default: 0] += tokens
+                    if interval.endedAt >= today {
+                        if calendar.isDate(interval.startedAt, equalTo: interval.endedAt, toGranularity: .hour) {
+                            let hour = calendar.component(.hour, from: interval.endedAt)
+                            hourly[String(format: "%02d", hour), default: 0] += tokens
+                        } else {
+                            unattributedRemoteHourlyTokens += tokens
+                        }
                     }
                 }
                 continue
@@ -549,7 +557,8 @@ public enum CodexLocalUsageLoader {
                 .map { CodexUsageHistoryBucket(key: $0.key, tokens: $0.value) }
                 .sorted { $0.key < $1.key },
             capturedAt: now,
-            unattributedRemoteTokens: unattributedRemoteTokens > 0 ? unattributedRemoteTokens : nil
+            unattributedRemoteTokens: unattributedRemoteTokens > 0 ? unattributedRemoteTokens : nil,
+            unattributedRemoteHourlyTokens: unattributedRemoteHourlyTokens > 0 ? unattributedRemoteHourlyTokens : nil
         )
     }
 

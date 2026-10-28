@@ -547,7 +547,11 @@ struct IslandPanelView: View {
                     }
                 )
                 .onPreferenceChange(NotificationContentHeightKey.self) { height in
-                    if height > 0 {
+                    // A previously mounted notification may finish layout
+                    // after the surface has switched to a different card.
+                    if height > 0, isNotificationMode,
+                       let current = model.activeIslandCardSession,
+                       notificationCardIdentity(for: current) == notificationCardIdentity(for: session) {
                         model.measuredNotificationContentHeight = height
                     }
                 }
@@ -602,6 +606,27 @@ struct IslandPanelView: View {
                 tint: .orange.opacity(0.92),
                 showsHourAxis: true
             )
+            if let tokens = model.codexLocalUsageSnapshot?.unattributedRemoteTokens, tokens > 0 {
+                HStack {
+                    Text(lang.t("island.usageHistory.remoteUnattributed"))
+                    Spacer()
+                    Text(UsageTokenFormatter.compact(tokens) + " tokens")
+                        .monospacedDigit()
+                }
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.orange.opacity(0.8))
+                .help(lang.t("island.usageHistory.remoteUnattributedHelp"))
+            }
+            if let tokens = model.codexLocalUsageSnapshot?.unattributedRemoteHourlyTokens, tokens > 0 {
+                HStack {
+                    Text(lang.t("island.usageHistory.remoteHourlyUnattributed"))
+                    Spacer()
+                    Text(UsageTokenFormatter.compact(tokens) + " tokens").monospacedDigit()
+                }
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.orange.opacity(0.8))
+                .help(lang.t("island.usageHistory.remoteHourlyUnattributedHelp"))
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -652,6 +677,7 @@ struct IslandPanelView: View {
                     .map { ($0.key, $0.tokens) }
             )
             let firstAvailableKey = values.keys.min()
+            let remoteHasUnattributed = (model.codexLocalUsageSnapshot?.unattributedRemoteTokens ?? 0) > 0
             return (-29...0).compactMap { offset in
                 guard let date = calendar.date(byAdding: .day, value: offset, to: today) else {
                     return nil
@@ -661,7 +687,7 @@ struct IslandPanelView: View {
                 return UsageHistoryPoint(
                     id: "local-\(key)",
                     label: key,
-                    tokens: values[key] ?? (isCovered ? 0 : nil)
+                    tokens: values[key] ?? (isCovered && !remoteHasUnattributed ? 0 : nil)
                 )
             }
 
@@ -671,12 +697,14 @@ struct IslandPanelView: View {
                     .map { ($0.key, $0.tokens) }
             )
             let currentHour = calendar.component(.hour, from: now)
+            let remoteHasUnattributed = (model.codexLocalUsageSnapshot?.unattributedRemoteTokens ?? 0) > 0
+                || (model.codexLocalUsageSnapshot?.unattributedRemoteHourlyTokens ?? 0) > 0
             return (0..<24).map { hour in
                 let key = String(format: "%02d", hour)
                 return UsageHistoryPoint(
                     id: "hour-\(key)",
                     label: "\(key):00",
-                    tokens: hour <= currentHour ? (values[key] ?? 0) : nil
+                    tokens: hour <= currentHour ? (values[key] ?? (remoteHasUnattributed ? nil : 0)) : nil
                 )
             }
         }
@@ -981,6 +1009,8 @@ private struct UsageMiniChartRow: View {
                 Text(label)
                     .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(V6Palette.paper.opacity(0.48))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                     .frame(width: 52, alignment: .leading)
 
                 GeometryReader { geometry in

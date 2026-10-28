@@ -100,6 +100,16 @@ struct CodexRemoteUsageTests {
     }
 
     @Test
+    func sameDayRemoteUsageWithoutKnownHourIsReportedSeparately() {
+        let observed = usage(700, start: "2026-10-02T08:00:00Z", end: "2026-10-02T10:30:00Z")
+        let result = snapshot([observed], now: "2026-10-02T11:00:00Z")
+        #expect(result.dailyBuckets == [.init(key: "2026-10-02", tokens: 700)])
+        #expect(result.hourlyBuckets.isEmpty)
+        #expect(result.unattributedRemoteTokens == nil)
+        #expect(result.unattributedRemoteHourlyTokens == 700)
+    }
+
+    @Test
     func invalidLargerHostCounterCannotHideAValidThreadCounter() {
         let valid = usage(100, start: "2026-10-02T08:00:00Z", end: "2026-10-02T09:00:00Z")
         var future = valid

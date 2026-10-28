@@ -264,7 +264,7 @@ struct V6ClosedPill: View {
             return physicalNotchWidth + 2 * max(44, max(leftW, rightW) + pad)
         }
         let labelW = label.map { 6 + V6CenterLabelView.intrinsicWidth(of: $0) } ?? 0
-        return max(minWidth, pad * 2 + leftW + labelW + (rightSlot == nil ? 0 : 6 + rightW))
+        return max(minWidth, pad * 2 + leftW + labelW + 6 + rightW)
     }
 
     @ViewBuilder
@@ -303,7 +303,7 @@ struct V6ClosedPill: View {
         let rightW = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
 
         let labelBlock = (label == nil ? 0 : 6 + labelW)
-        let rightBlock = (rightSlot == nil ? 0 : Self.innerGap + rightW)
+        let rightBlock = Self.innerGap + rightW
         let intrinsic = pad * 2 + glyphW + labelBlock + rightBlock
         let width = max(minWidth, intrinsic)
 

@@ -31,6 +31,13 @@ struct NPUIslandPresentationTests {
     }
 
     @Test
+    func externalDisplayReservesSpaceEvenWithAnEmptyRightLane() {
+        let width = V6ClosedPill.contentWidth(layout: .external, height: 24, physicalNotchWidth: 0,
+                                              label: nil, rightSlot: nil)
+        #expect(width >= 24 + NPUIslandPresentation.compactWidth + 6)
+    }
+
+    @Test
     func bothClosedLanesRemainOutsideThePhysicalNotch() {
         let right: IslandRightSlotContent = .usage(quotaRemainingPercentage: 100, resetTimeRemainingPercentage: 100)
         let width = V6ClosedPill.contentWidth(layout: .macbook, height: 32, physicalNotchWidth: 224, label: nil, rightSlot: right)

@@ -44,6 +44,7 @@ This index is the repository map for humans and coding agents. Read these files 
 
 ## Remote / SSH
 
+- [docs/remote-codex-usage.md](./remote-codex-usage.md) for Codex App remote-session token collection, date attribution, and its coverage limits
 - [docs/ssh-setup.md](./ssh-setup.md) for connecting Open Island to Claude Code running on remote servers via SSH socket forwarding
 
 ## Release

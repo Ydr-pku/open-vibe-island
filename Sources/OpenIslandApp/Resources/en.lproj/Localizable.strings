@@ -201,8 +201,12 @@
 "island.usageWaiting" = "Usage waiting";
 "island.usageHistory.title" = "Token usage";
 "island.usageHistory.official30d" = "Account 30d";
-"island.usageHistory.local30d" = "Local 30d";
+"island.usageHistory.local30d" = "Sessions 30d";
 "island.usageHistory.today24h" = "Today 24h";
+"island.usageHistory.remoteUnattributed" = "Remote history without dates";
+"island.usageHistory.remoteUnattributedHelp" = "The app reported a cumulative total without daily timestamps. This amount is not included in the dated charts.";
+"island.usageHistory.remoteHourlyUnattributed" = "Today’s remote usage without hours";
+"island.usageHistory.remoteHourlyUnattributedHelp" = "Included in today's daily total, but the hour is unknown, so it is not shown in the hourly chart.";
 
 /* Island Panel - Approval */
 "approval.toolPermissionRequested" = "Tool permission requested";

@@ -508,6 +508,8 @@ final class OverlayPanelController {
             && model.hasCodexUsageHistory
             && !isNotificationMode
             ? Self.usageHistoryOverviewHeight
+                + ((model.codexLocalUsageSnapshot?.unattributedRemoteTokens ?? 0) > 0 ? 18 : 0)
+                + ((model.codexLocalUsageSnapshot?.unattributedRemoteHourlyTokens ?? 0) > 0 ? 18 : 0)
             : 0
 
         if !isNotificationMode {

@@ -1170,8 +1170,8 @@ struct AppModelSessionListTests {
         model.notchOpen(reason: .notification, surface: surfaceB)
 
         #expect(
-            model.measuredNotificationContentHeight == 0,
-            "Switching to a different session's card must clear the stale measurement from the previous session to prevent wrong initial panel sizing."
+            model.measuredNotificationContentHeight != 320,
+            "Switching cards must discard the old measurement; the new card may already have been measured synchronously."
         )
     }
 
@@ -1214,8 +1214,8 @@ struct AppModelSessionListTests {
         #expect(model.islandSurface == surface)
         #expect(model.activeIslandCardSession?.phase == .completed)
         #expect(
-            model.measuredNotificationContentHeight == 0,
-            "Replacing a notification with different content for the same session must discard the previous card's measured height."
+            model.measuredNotificationContentHeight != 360,
+            "Replacing a card must discard its old measurement; the new card may already have been measured synchronously."
         )
     }
 

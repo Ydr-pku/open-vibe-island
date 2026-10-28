@@ -27,6 +27,9 @@ intervals; zero-delta samples also advance the observed lower bound. Known
 same-day intervals enter daily charts, and known same-hour intervals enter hourly
 charts. Cross-day cumulative history is exposed separately as
 `unattributedRemoteTokens`, rather than being shown as usage on the last day.
+Same-day observations spanning several hours are included in the daily total,
+and shown separately as `unattributedRemoteHourlyTokens` instead of being
+assigned to an arbitrary hour.
 An old thread can continue accumulating new observations without requiring that
 it was created within the chart's 30-day period. Offline observations remain
 cached; unknown or unavailable remote data must not be described as complete

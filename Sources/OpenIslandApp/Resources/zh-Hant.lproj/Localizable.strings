@@ -201,8 +201,12 @@
 "island.usageWaiting" = "等待用量資料";
 "island.usageHistory.title" = "Token 用量";
 "island.usageHistory.official30d" = "帳戶 30 日";
-"island.usageHistory.local30d" = "本機 30 日";
+"island.usageHistory.local30d" = "工作階段 30 日";
 "island.usageHistory.today24h" = "今日 24 時";
+"island.usageHistory.remoteUnattributed" = "遠端歷史未分日";
+"island.usageHistory.remoteUnattributedHelp" = "Codex App 只提供這部分用量的累計值，無法確定每日分布，因此未計入上方日期圖表。";
+"island.usageHistory.remoteHourlyUnattributed" = "今日遠端未分時";
+"island.usageHistory.remoteHourlyUnattributedHelp" = "已計入今日日總量，但無法確定小時分布，因此未計入小時圖表。";
 
 /* Island Panel - Approval */
 "approval.toolPermissionRequested" = "請求工具權限";
