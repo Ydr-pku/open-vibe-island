@@ -6,11 +6,18 @@ enum IslandChromeMetrics {
     static let npuHeaderButtonWidth: CGFloat = 40
     static let notchHeaderHorizontalPadding: CGFloat = 46
     static let notchLaneSafetyInset: CGFloat = 12
+    // Reserve space for the full compact Codex quota/reset chip, including
+    // 100% values and its capsule padding, on either side of the notch.
+    static let minimumOpenedUsageLaneWidth: CGFloat = 146
     static var openedHeaderControlsWidth: CGFloat {
-        headerControlButtonSize * 3 + npuHeaderButtonWidth + headerControlSpacing * 3
+        npuHeaderButtonWidth
     }
     static func minimumNotchedOpenedWidth(notchWidth: CGFloat) -> CGFloat {
-        notchWidth + 2 * (notchHeaderHorizontalPadding + openedHeaderControlsWidth + notchLaneSafetyInset)
+        notchWidth + 2 * (notchHeaderHorizontalPadding
+            + max(openedHeaderControlsWidth, minimumOpenedUsageLaneWidth) + notchLaneSafetyInset)
+    }
+    static func openedNotchedLaneWidth(leftVisibleWidth: CGFloat, rightVisibleWidth: CGFloat) -> CGFloat {
+        max(0, min(leftVisibleWidth, rightVisibleWidth) - notchLaneSafetyInset)
     }
     static let openedShadowHorizontalInset: CGFloat = 18
     static let openedShadowBottomInset: CGFloat = 22

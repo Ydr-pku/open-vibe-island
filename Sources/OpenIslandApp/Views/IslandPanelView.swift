@@ -98,7 +98,6 @@ struct IslandPanelView: View {
     private static let headerHorizontalPadding: CGFloat = 18
     private static let headerTopPadding: CGFloat = 2
     private static let notchHeaderHorizontalPadding = IslandChromeMetrics.notchHeaderHorizontalPadding
-    private static let notchLaneSafetyInset = IslandChromeMetrics.notchLaneSafetyInset
     private static let minimumRightUsageLaneWidth: CGFloat = 58
 
     var model: AppModel
@@ -111,7 +110,6 @@ struct IslandPanelView: View {
     }
 
     @State private var isHovering = false
-    @State private var showingQuitConfirmation = false
     @State private var keepsOpenedSurfaceMounted = false
     @State private var openedSurfaceMountGeneration: UInt64 = 0
 
@@ -185,14 +183,6 @@ struct IslandPanelView: View {
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .alert(model.lang.t("island.quit.confirmTitle"), isPresented: $showingQuitConfirmation) {
-            Button(model.lang.t("island.quit.confirmAction"), role: .destructive) {
-                model.quitApplication()
-            }
-            Button(model.lang.t("settings.general.cancel"), role: .cancel) {}
-        } message: {
-            Text(model.lang.t("island.quit.confirmMessage"))
-        }
         .onAppear {
             syncOpenedSurfaceMount(with: model.notchStatus, immediate: true)
         }
@@ -378,55 +368,17 @@ struct IslandPanelView: View {
     }
 
     private var openedHeaderButtons: some View {
-        HStack(spacing: Self.headerControlSpacing) {
-            Button {
-                model.showNPUConnection()
-            } label: {
-                Text(npuMonitor.state == .connected ? "NPU" : "SSH")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(npuMonitor.state == .connected ? .cyan : .white.opacity(0.7))
-                    .frame(width: IslandChromeMetrics.npuHeaderButtonWidth, height: Self.headerControlButtonSize)
-                    .background(.white.opacity(0.08), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .help(lang.t("npu.connection.title"))
-
-            headerIconButton(
-                systemName: "power",
-                tint: .white.opacity(0.62),
-                accessibilityLabel: model.lang.t("island.quit.confirmTitle")
-            ) {
-                showingQuitConfirmation = true
-            }
-
-            headerIconButton(systemName: "gearshape.fill", tint: .white.opacity(0.62)) {
-                model.showSettings()
-            }
-
-            headerIconButton(
-                systemName: model.isSoundMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                tint: model.isSoundMuted ? .orange.opacity(0.92) : .white.opacity(0.62)
-            ) {
-                model.toggleSoundMuted()
-            }
-        }
-    }
-
-    private func headerIconButton(
-        systemName: String,
-        tint: Color,
-        accessibilityLabel: String? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: Self.headerControlButtonSize, height: Self.headerControlButtonSize)
-                .background(.white.opacity(0.08), in: Circle())
+        Button {
+            model.showNPUConnection()
+        } label: {
+            Text(npuMonitor.state == .connected ? "NPU" : "SSH")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(npuMonitor.state == .connected ? .cyan : .white.opacity(0.7))
+                .frame(width: IslandChromeMetrics.npuHeaderButtonWidth, height: Self.headerControlButtonSize)
+                .background(.white.opacity(0.08), in: Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel ?? systemName)
+        .help(lang.t("npu.connection.title"))
     }
 
     private var openedContent: some View {
@@ -852,14 +804,11 @@ struct IslandPanelView: View {
         let rawLeftWidth = max(0, min(contentMaxX, leftVisibleMaxX) - contentMinX)
         let rawRightWidth = max(0, contentMaxX - max(contentMinX, rightVisibleMinX))
 
-        let leftControlsWidth = min(
-            contentWidth,
-            max(openedHeaderButtonsWidth, rawLeftWidth - Self.notchLaneSafetyInset)
-        )
-        let proposedRightUsageWidth = max(0, rawRightWidth - Self.notchLaneSafetyInset)
-        let rightUsageWidth = proposedRightUsageWidth >= Self.minimumRightUsageLaneWidth
-            ? proposedRightUsageWidth
-            : 0
+        let laneWidth = min(contentWidth / 2, IslandChromeMetrics.openedNotchedLaneWidth(
+            leftVisibleWidth: rawLeftWidth, rightVisibleWidth: rawRightWidth
+        ))
+        let leftControlsWidth = laneWidth
+        let rightUsageWidth = laneWidth >= Self.minimumRightUsageLaneWidth ? laneWidth : 0
         let centerGapWidth = max(0, contentWidth - leftControlsWidth - rightUsageWidth)
 
         return OpenedHeaderMetrics(
