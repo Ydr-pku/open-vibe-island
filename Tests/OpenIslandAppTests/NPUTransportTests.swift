@@ -70,6 +70,61 @@ struct NPUTransportTests {
         #expect(SSHTransport.sampleCommand == "npu-smi info\n")
     }
 
+    @Test
+    func sshExitWaitsForDelayedStderrAndIncludesAuthenticationFailure() throws {
+        let transport = SSHTransport()
+        defer { transport.stop() }
+        let stderrStarted = DispatchSemaphore(value: 0)
+        let releaseStderr = DispatchSemaphore(value: 0)
+        let exited = DispatchSemaphore(value: 0)
+        let result = ExitResult()
+        transport.onErrorOutput = { _ in
+            stderrStarted.signal()
+            _ = releaseStderr.wait(timeout: .now() + 3)
+        }
+        transport.onExit = { code, stderr in
+            result.set(code: code, stderr: stderr)
+            exited.signal()
+        }
+        try transport.startLocalTestProcess(executableURL: URL(fileURLWithPath: "/bin/sh"),
+                                            arguments: ["-c", "printf 'Permission denied (password).\\n' >&2; exit 255"])
+        #expect(stderrStarted.wait(timeout: .now() + 3) == .success)
+        // The child can already be dead, but auth diagnostics are not yet
+        // delivered. Exit must wait for the stderr reader to finish.
+        #expect(exited.wait(timeout: .now() + 0.3) == .timedOut)
+        releaseStderr.signal()
+        #expect(exited.wait(timeout: .now() + 3) == .success)
+        #expect(result.code == 255)
+        #expect(result.stderr.contains("Permission denied"))
+    }
+
+    @Test
+    func largeStderrIsDrainedContinuouslyAndRetainsItsFinalDiagnostic() throws {
+        let transport = SSHTransport()
+        defer { transport.stop() }
+        let exited = DispatchSemaphore(value: 0)
+        let result = ExitResult()
+        transport.onExit = { code, stderr in result.set(code: code, stderr: stderr); exited.signal() }
+        let script = "i=0; while [ $i -lt 3000 ]; do printf 'diagnostic padding output\\n' >&2; i=$((i+1)); done; printf 'Host key verification failed.\\n' >&2; exit 255"
+        try transport.startLocalTestProcess(executableURL: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script])
+        #expect(exited.wait(timeout: .now() + 5) == .success)
+        #expect(result.code == 255)
+        #expect(result.stderr.contains("Host key verification failed"))
+        #expect(result.stderr.utf8.count <= 8192)
+    }
+
+    @Test
+    func stopDoesNotWaitForAStillRunningProcessOrEmitExit() throws {
+        let transport = SSHTransport()
+        let exited = DispatchSemaphore(value: 0)
+        transport.onExit = { _, _ in exited.signal() }
+        try transport.startLocalTestProcess(executableURL: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "sleep 2"])
+        let start = Date()
+        transport.stop()
+        #expect(Date().timeIntervalSince(start) < 1)
+        #expect(exited.wait(timeout: .now() + 0.2) == .timedOut)
+    }
+
     private func connectClient(_ path: String) throws -> Int32 {
         let client = socket(AF_UNIX, SOCK_STREAM, 0)
         guard client >= 0 else { throw MonitorError.transport("local test socket() failed") }
@@ -109,4 +164,13 @@ struct NPUTransportTests {
             result.append(contentsOf: bytes.prefix(count))
         }
     }
+}
+
+private final class ExitResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedCode: Int32 = 0
+    private var storedStderr = ""
+    func set(code: Int32, stderr: String) { lock.lock(); storedCode = code; storedStderr = stderr; lock.unlock() }
+    var code: Int32 { lock.lock(); defer { lock.unlock() }; return storedCode }
+    var stderr: String { lock.lock(); defer { lock.unlock() }; return storedStderr }
 }

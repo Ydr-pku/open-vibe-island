@@ -35,7 +35,6 @@ final class MonitorStore: ObservableObject {
     private var sampleStarted: Date?
     private var nextSample = Date.distantPast
     private var buffer = ""
-    private var stderrBuffer = ""
     private var generation = UUID()
     private var trustReply: ((Bool) -> Void)?
     private var activeEndpoint: SSHEndpoint?
@@ -44,7 +43,6 @@ final class MonitorStore: ObservableObject {
     private var notifiedEstablished = false
     private var reconnectTask: Task<Void, Never>?
     private var retryCount = 0
-    private var unknownFailureCount = 0
     private var timeoutFailureCount = 0
 
     // Ported from apps/npu-monitor. Ownership belongs to the application, so
@@ -97,7 +95,6 @@ final class MonitorStore: ObservableObject {
         mayReconnect = retryingKnownEndpoint
         notifiedEstablished = false
         retryCount = 0
-        unknownFailureCount = 0
         timeoutFailureCount = 0
         startTransport(isRetry: retryingKnownEndpoint)
     }
@@ -107,7 +104,7 @@ final class MonitorStore: ObservableObject {
         state = .connecting
         isReconnecting = isRetry
         sampleStarted = nil
-        buffer = ""; stderrBuffer = ""
+        buffer = ""
         let token = generation
         let transport = makeTransport()
         self.transport = transport
@@ -117,21 +114,14 @@ final class MonitorStore: ObservableObject {
                 self.receive(text)
             }
         }
-        transport.onErrorOutput = { [weak self] text in
+        transport.onExit = { [weak self] code, stderr in
             Task { @MainActor in
                 guard let self, self.generation == token else { return }
-                self.stderrBuffer = String((self.stderrBuffer + text).suffix(8192))
-            }
-        }
-        transport.onExit = { [weak self] code in
-            Task { @MainActor in
-                guard let self, self.generation == token else { return }
-                // stderr and termination callbacks may arrive in either order.
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                guard self.generation == token else { return }
-                let detail = self.stderrBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
                 let message = detail.isEmpty ? "SSH 连接已关闭（状态 \(code)），请重新连接。" : detail
-                self.handleFailure(message, disposition: Self.sshFailureDisposition(detail))
+                let disposition: FailureDisposition = detail.isEmpty && code == 0
+                    ? .transient : Self.sshFailureDisposition(detail)
+                self.handleFailure(message, disposition: disposition)
             }
         }
         transport.onTrust = { [weak self] prompt, reply in
@@ -149,7 +139,11 @@ final class MonitorStore: ObservableObject {
             return
         }
         do { try requestSample() }
-        catch { handleFailure(error.localizedDescription, disposition: Self.sshFailureDisposition(error.localizedDescription)) }
+        catch {
+            // An immediate broken stdin can race an SSH authentication error.
+            // Wait for the atomic exit+stderr callback rather than retrying an
+            // unclassified authentication attempt. The timeout bounds waiting.
+        }
     }
 
     func disconnect() {
@@ -168,7 +162,7 @@ final class MonitorStore: ObservableObject {
         stopTransport()
         activeEndpoint = nil; activeCredential = nil
         mayReconnect = false; notifiedEstablished = false
-        retryCount = 0; unknownFailureCount = 0; timeoutFailureCount = 0
+        retryCount = 0; timeoutFailureCount = 0
         isDemo = false; isPaused = false; isReconnecting = false
         state = .disconnected
         password = ""
@@ -252,7 +246,7 @@ final class MonitorStore: ObservableObject {
             state = .connected
             isReconnecting = false
             mayReconnect = true
-            retryCount = 0; unknownFailureCount = 0; timeoutFailureCount = 0
+            retryCount = 0; timeoutFailureCount = 0
             errorMessage = nil
             sampleStarted = nil
             nextSample = Date().addingTimeInterval(refreshInterval)
@@ -275,7 +269,11 @@ final class MonitorStore: ObservableObject {
         }
         if let sampleStarted {
             if hostTrustRequest == nil && Date().timeIntervalSince(sampleStarted) > 35 {
-                handleFailure("35 秒内未收到完整的 npu-smi info 输出。请检查网络、驱动环境及登录 shell；当前支持以 #、$、%、> 结尾的提示符。", disposition: .timeout)
+                let message = "35 秒内未收到完整的 npu-smi info 输出。请检查网络、驱动环境及登录 shell；当前支持以 #、$、%、> 结尾的提示符。"
+                // No verified SSH exit means the attempt might still be
+                // waiting for authentication; never repeat it blindly.
+                if state == .connecting { failPermanently(message) }
+                else { handleFailure(message, disposition: .timeout) }
             }
         } else if state == .connected && !isPaused && Date() >= nextSample {
             do { try requestSample() }
@@ -287,8 +285,8 @@ final class MonitorStore: ObservableObject {
         case transient, timeout, unknown, permanent
     }
 
-    /// Unknown SSH failures have their own small retry budget, so an
-    /// unrecognized authentication error cannot cause unlimited logins.
+    /// Never retry an unclassified SSH exit: it may be an authentication
+    /// failure whose diagnostic format this version does not recognize.
     private static func sshFailureDisposition(_ detail: String) -> FailureDisposition {
         let message = detail.lowercased()
         let terminal = ["permission denied", "authentication failed", "authentication failure",
@@ -313,8 +311,7 @@ final class MonitorStore: ObservableObject {
         case .permanent:
             failPermanently(message); return
         case .unknown:
-            unknownFailureCount += 1
-            if unknownFailureCount > 3 { failPermanently(message); return }
+            failPermanently(message); return
         case .timeout:
             timeoutFailureCount += 1
             if timeoutFailureCount > 5 { failPermanently(message); return }

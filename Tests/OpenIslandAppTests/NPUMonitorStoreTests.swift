@@ -56,7 +56,7 @@ struct NPUMonitorStoreTests {
     }
 
     @Test
-    func connectionFailureStopsTransportAndCanBeRetried() {
+    func connectionFailureStopsTransportAndCanBeRetried() async throws {
         let (defaults, suite) = testDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let transport = FakeNPUTransport()
@@ -65,6 +65,9 @@ struct NPUMonitorStoreTests {
         store.connectionInput = "alice@node.example"
         store.password = "secret"
         store.connect()
+        #expect(store.state == .connecting)
+        transport.onExit?(1, "local test failure")
+        try await waitUntil { store.state == .failed }
         #expect(store.state == .failed)
         #expect(store.errorMessage == "local test failure")
         #expect(store.password.isEmpty)
@@ -176,8 +179,7 @@ struct NPUMonitorStoreTests {
 
         let oldOutput = first.onOutput
         let oldExit = first.onExit
-        first.onErrorOutput?("Read from remote host: Connection reset by peer\nclient_loop: send disconnect: Broken pipe")
-        first.onExit?(255)
+        first.onExit?(255, "Read from remote host: Connection reset by peer\nclient_loop: send disconnect: Broken pipe")
         try await waitUntil { attempts == 2 }
         #expect(store.state == .connecting)
         #expect(store.isReconnecting)
@@ -187,7 +189,7 @@ struct NPUMonitorStoreTests {
         #expect(delays == [1])
 
         oldOutput?(NPUParsingTests.fixture + "\nroot@node:~# ")
-        oldExit?(255)
+        oldExit?(255, "old callback")
         try await Task.sleep(for: .milliseconds(250))
         #expect(store.state == .connecting)
         #expect(attempts == 2)
@@ -214,8 +216,7 @@ struct NPUMonitorStoreTests {
         store.connect()
         transport.onOutput?(NPUParsingTests.fixture + "\nroot@node:~# ")
         try await waitUntil { store.state == .connected }
-        transport.onErrorOutput?("Broken pipe")
-        transport.onExit?(255)
+        transport.onExit?(255, "Broken pipe")
         try await waitUntil { store.isReconnecting }
         store.disconnect()
         try await Task.sleep(for: .milliseconds(550))
@@ -241,11 +242,9 @@ struct NPUMonitorStoreTests {
         store.connect()
         first.onOutput?(NPUParsingTests.fixture + "\nroot@node:~# ")
         try await waitUntil { store.state == .connected }
-        first.onErrorOutput?("Connection reset by peer")
-        first.onExit?(255)
+        first.onExit?(255, "Connection reset by peer")
         try await waitUntil { attempts == 2 }
-        second.onErrorOutput?("Permission denied, please try again.")
-        second.onExit?(255)
+        second.onExit?(255, "Permission denied, please try again.")
         try await waitUntil { store.state == .failed }
         try await Task.sleep(for: .milliseconds(80))
         #expect(attempts == 2)
@@ -269,8 +268,7 @@ struct NPUMonitorStoreTests {
         store.password = "test-password"
         store.connect(retryingKnownEndpoint: true)
         #expect(store.isReconnecting)
-        first.onErrorOutput?("Connection refused")
-        first.onExit?(255)
+        first.onExit?(255, "Connection refused")
         try await waitUntil { attempts == 2 }
         second.onOutput?(NPUParsingTests.fixture + "\nroot@node:~# ")
         try await waitUntil { store.state == .connected }
@@ -280,7 +278,7 @@ struct NPUMonitorStoreTests {
     }
 
     @Test
-    func unrecognizedFailuresAreBoundedAndChangedHostKeyIsNeverRetried() async throws {
+    func unrecognizedFailureAndChangedHostKeyAreNeverRetried() async throws {
         let (defaults, suite) = testDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let transports = (0..<4).map { _ in FakeNPUTransport() }
@@ -293,14 +291,10 @@ struct NPUMonitorStoreTests {
         store.connectionInput = "root@node.example"
         store.password = "test-password"
         store.connect(retryingKnownEndpoint: true)
-        for (index, transport) in transports.enumerated() {
-            try await waitUntil { attempts > index }
-            transport.onErrorOutput?("Unrecognized protocol failure")
-            transport.onExit?(255)
-        }
+        transports[0].onExit?(255, "Unrecognized protocol failure")
         try await waitUntil { store.state == .failed }
-        #expect(attempts == 4)
-        #expect(scheduledAttempts == [1, 2, 3])
+        #expect(attempts == 1)
+        #expect(scheduledAttempts.isEmpty)
         #expect(failures == 1)
 
         let changedKey = FakeNPUTransport()
@@ -311,10 +305,75 @@ struct NPUMonitorStoreTests {
         retry.connectionInput = "root@node.example"
         retry.password = "test-password"
         retry.connect(retryingKnownEndpoint: true)
-        changedKey.onErrorOutput?("WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed.")
-        changedKey.onExit?(255)
+        changedKey.onExit?(255, "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed.")
         try await waitUntil { retry.state == .failed }
         #expect(keyAttempts == 1)
+    }
+
+    @Test
+    func repeatedNetworkErrorsUseBackoffWithoutOverlappingConnections() async throws {
+        let (defaults, suite) = testDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let transports = (0..<4).map { _ in FakeNPUTransport() }
+        var attempts = 0
+        var scheduledAttempts: [Int] = []
+        let store = MonitorStore(defaults: defaults, startsTimer: false, makeTransport: {
+            defer { attempts += 1 }; return transports[min(attempts, transports.count - 1)]
+        }, reconnectDelay: { attempt in scheduledAttempts.append(attempt); return 0.01 })
+        store.connectionInput = "root@node.example"
+        store.password = "test-password"
+        store.connect(retryingKnownEndpoint: true)
+        for index in 0..<3 {
+            try await waitUntil { attempts > index }
+            transports[index].onExit?(255, "Connection reset by peer")
+        }
+        try await waitUntil { attempts == 4 }
+        #expect(scheduledAttempts == [1, 2, 3])
+        #expect(transports[0].stopCount == 1)
+        #expect(transports[1].stopCount == 1)
+        #expect(transports[2].stopCount == 1)
+        store.shutdown()
+    }
+
+    @Test
+    func connectingWriteErrorWaitsForAuthenticationDiagnostic() async throws {
+        let (defaults, suite) = testDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let transport = FakeNPUTransport()
+        transport.sampleError = MonitorError.transport("Broken pipe")
+        var attempts = 0
+        let store = MonitorStore(defaults: defaults, startsTimer: false, makeTransport: {
+            attempts += 1; return transport
+        }, reconnectDelay: { _ in 0.01 })
+        store.connectionInput = "root@node.example"
+        store.password = "test-password"
+        store.connect(retryingKnownEndpoint: true)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(attempts == 1)
+        #expect(store.state == .connecting)
+        transport.onExit?(255, "Permission denied, please try again.")
+        try await waitUntil { store.state == .failed }
+        #expect(attempts == 1)
+        #expect(store.errorMessage?.contains("Permission denied") == true)
+    }
+
+    @Test
+    func cleanRemoteExitCanReconnectButUnclassifiedErrorCannot() async throws {
+        let (defaults, suite) = testDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = FakeNPUTransport(), second = FakeNPUTransport()
+        var attempts = 0
+        let store = MonitorStore(defaults: defaults, startsTimer: false, makeTransport: {
+            attempts += 1; return attempts == 1 ? first : second
+        }, reconnectDelay: { _ in 0.01 })
+        store.connectionInput = "root@node.example"
+        store.password = "test-password"
+        store.connect(retryingKnownEndpoint: true)
+        first.onExit?(0, "")
+        try await waitUntil { attempts == 2 }
+        second.onExit?(255, "")
+        try await waitUntil { store.state == .failed }
+        #expect(attempts == 2)
     }
 
     @Test
@@ -351,8 +410,7 @@ struct NPUMonitorStoreTests {
         store.password = "test-password"
         store.connect(retryingKnownEndpoint: true)
         first.onOutput?(NPUParsingTests.fixture + "\nroot@node:~# ")
-        first.onErrorOutput?("Connection reset by peer")
-        first.onExit?(255)
+        first.onExit?(255, "Connection reset by peer")
         try await waitUntil { attempts == 2 }
         try await Task.sleep(for: .milliseconds(400))
         #expect(store.state == .connecting)
@@ -374,8 +432,7 @@ struct NPUMonitorStoreTests {
         store.connectionInput = "root@node.example"
         store.password = "test-password"
         store.connect(retryingKnownEndpoint: true)
-        transport.onErrorOutput?("Connection reset by peer")
-        transport.onExit?(255)
+        transport.onExit?(255, "Connection reset by peer")
         try await waitUntil { transport.stopCount == 1 }
         store.shutdown()
         try await Task.sleep(for: .milliseconds(400))
@@ -402,7 +459,7 @@ struct NPUMonitorStoreTests {
 private final class FakeNPUTransport: NPUTransport {
     var onOutput: ((String) -> Void)?
     var onErrorOutput: ((String) -> Void)?
-    var onExit: ((Int32) -> Void)?
+    var onExit: ((Int32, String) -> Void)?
     var onTrust: ((String, @escaping (Bool) -> Void) -> Void)?
     var endpoint: SSHEndpoint?
     var receivedPassword: String?
