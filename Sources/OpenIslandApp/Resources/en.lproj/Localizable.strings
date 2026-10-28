@@ -229,3 +229,25 @@
 
 /* Window Titles */
 "window.settings" = "Open Island Settings";
+
+/* NPU monitor */
+"npu.connection.title" = "NPU · SSH connection";
+"npu.compact.help" = "NPU HBM used / average AI Core utilization";
+"npu.processes.title" = "NPU processes · chip / PID / name / memory";
+"npu.processes.empty" = "No NPU processes running";
+"npu.disconnect" = "Disconnect";
+"npu.connect" = "Connect and monitor";
+"npu.connecting" = "Connecting and waiting for the first sample…";
+"npu.connected" = "Connected. Monitoring continues when this window is closed.";
+"npu.disconnected" = "Connect via SSH to view NPU processes.";
+"npu.failed" = "Connection failed. Open SSH to reconnect.";
+"npu.stale" = "Sampling paused or data out of date";
+"npu.chips" = "chips";
+"npu.address" = "SSH address";
+"npu.password" = "SSH password";
+"npu.credentials.help" = "Password is used only for this connection and is never saved.";
+"npu.interval" = "Refresh";
+"npu.connection.help" = "Direct password authentication. Confirm the host fingerprint on first connection.";
+"npu.trust.title" = "Verify SSH host fingerprint";
+"npu.trust.confirm" = "Trust and connect";
+"npu.cancel" = "Cancel";

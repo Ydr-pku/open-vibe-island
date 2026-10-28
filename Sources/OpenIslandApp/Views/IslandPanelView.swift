@@ -93,16 +93,22 @@ private struct ConditionalDrawingGroup: ViewModifier {
 // MARK: - Main island view
 
 struct IslandPanelView: View {
-    private static let headerControlButtonSize: CGFloat = 22
-    private static let headerControlSpacing: CGFloat = 8
+    private static let headerControlButtonSize = IslandChromeMetrics.headerControlButtonSize
+    private static let headerControlSpacing = IslandChromeMetrics.headerControlSpacing
     private static let headerHorizontalPadding: CGFloat = 18
     private static let headerTopPadding: CGFloat = 2
-    private static let notchHeaderHorizontalPadding: CGFloat = 46
-    private static let notchLaneSafetyInset: CGFloat = 12
+    private static let notchHeaderHorizontalPadding = IslandChromeMetrics.notchHeaderHorizontalPadding
+    private static let notchLaneSafetyInset = IslandChromeMetrics.notchLaneSafetyInset
     private static let minimumRightUsageLaneWidth: CGFloat = 58
 
     var model: AppModel
+    @ObservedObject private var npuMonitor: MonitorStore
     private var lang: LanguageManager { model.lang }
+
+    init(model: AppModel) {
+        self.model = model
+        _npuMonitor = ObservedObject(wrappedValue: model.npuMonitor)
+    }
 
     @State private var isHovering = false
     @State private var showingQuitConfirmation = false
@@ -160,7 +166,7 @@ struct IslandPanelView: View {
     }
 
     private var openedHeaderButtonsWidth: CGFloat {
-        (Self.headerControlButtonSize * 3) + (Self.headerControlSpacing * 2)
+        IslandChromeMetrics.openedHeaderControlsWidth
     }
 
     private var openedHeaderHorizontalPadding: CGFloat {
@@ -192,6 +198,9 @@ struct IslandPanelView: View {
         }
         .onChange(of: model.notchStatus) { _, status in
             syncOpenedSurfaceMount(with: status)
+        }
+        .onChange(of: NPUIslandPresentation.contentHeight(for: npuMonitor)) { _, _ in
+            model.refreshOverlayPlacement()
         }
     }
 
@@ -280,7 +289,8 @@ struct IslandPanelView: View {
             layout: layout,
             height: closedNotchHeight,
             physicalNotchWidth: layout == .macbook ? physicalNotchWidth : 0,
-            minWidth: 70
+            minWidth: 70,
+            npuMonitor: npuMonitor
         )
         .scaleEffect(isPopping ? 1.04 : 1, anchor: .top)
         .animation(popAnimation, value: isPopping)
@@ -369,6 +379,18 @@ struct IslandPanelView: View {
 
     private var openedHeaderButtons: some View {
         HStack(spacing: Self.headerControlSpacing) {
+            Button {
+                model.showNPUConnection()
+            } label: {
+                Text(npuMonitor.state == .connected ? "NPU" : "SSH")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(npuMonitor.state == .connected ? .cyan : .white.opacity(0.7))
+                    .frame(width: IslandChromeMetrics.npuHeaderButtonWidth, height: Self.headerControlButtonSize)
+                    .background(.white.opacity(0.08), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help(lang.t("npu.connection.title"))
+
             headerIconButton(
                 systemName: "power",
                 tint: .white.opacity(0.62),
@@ -413,6 +435,7 @@ struct IslandPanelView: View {
                !isNotificationMode,
                !(model.showCodexUsage && model.hasCodexUsageHistory) {
                 installHooksHint
+                    .frame(height: 44)
                     .padding(.horizontal, 18)
                     .padding(.top, 8)
             }
@@ -426,6 +449,9 @@ struct IslandPanelView: View {
 
             if isNotificationMode {
                 notificationSession
+            } else {
+                NPUProcessPanel(monitor: npuMonitor, onConnect: model.showNPUConnection)
+                    .padding(.horizontal, sessionListSideInset)
             }
 
         }

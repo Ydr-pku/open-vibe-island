@@ -243,6 +243,9 @@ enum HarnessArtifactRecorder {
     }
 
     private static func recognizedWindowKind(for window: NSWindow) -> String? {
+        if window.identifier?.rawValue == "OpenIsland.NPUConnection" {
+            return "npu-connection"
+        }
         if window is NSPanel {
             return window.frame.width >= 120 ? "overlay" : nil
         }

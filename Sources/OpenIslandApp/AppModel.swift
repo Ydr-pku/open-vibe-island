@@ -68,6 +68,13 @@ final class AppModel {
     let monitoring = ProcessMonitoringCoordinator()
     let codexAppServer = CodexAppServerCoordinator()
     let updateChecker = UpdateChecker()
+    let npuMonitor = MonitorStore()
+    @ObservationIgnored private lazy var npuConnectionWindow = NPUConnectionWindowController(monitor: npuMonitor)
+
+    func showNPUConnection() {
+        notchClose()
+        npuConnectionWindow.show()
+    }
 
     var notchStatus: NotchStatus {
         get { overlay.notchStatus }
@@ -938,14 +945,14 @@ final class AppModel {
         }
     }
 
-    /// Right-slot payload derived from the user's `islandRightSlot`
-    /// preference and current live state. Returns nil when the preference
-    /// is `.none` or there's nothing meaningful to show.
+    /// Codex usage takes priority while enabled, including an explicit unknown
+    /// state before quota arrives. Otherwise use the task-slot preference.
     func islandClosedRightSlotContent() -> IslandRightSlotContent? {
-        if let usage = officialClosedUsage {
+        if showCodexUsage {
+            let usage = officialClosedUsage
             return .usage(
-                quotaRemainingPercentage: usage.quotaRemainingPercentage,
-                resetTimeRemainingPercentage: usage.resetTimeRemainingPercentage
+                quotaRemainingPercentage: usage?.quotaRemainingPercentage,
+                resetTimeRemainingPercentage: usage?.resetTimeRemainingPercentage
             )
         }
 
@@ -987,11 +994,11 @@ final class AppModel {
         quotaRemainingPercentage: Int,
         resetTimeRemainingPercentage: Int?
     )? {
-        guard codexUsageSnapshot?.sourceFilePath
-                == CodexAppServerClient.rateLimitsSourceIdentifier,
-              let window = codexUsageSnapshot?.windows.max(by: {
-                  $0.usedPercentage < $1.usedPercentage
-              }) else {
+        // Both the live account API and rollout fallback contain account rate
+        // limits. Token history is a separate model and never enters this path.
+        guard let window = codexUsageSnapshot?.windows.max(by: {
+            $0.usedPercentage < $1.usedPercentage
+        }) else {
             return nil
         }
 

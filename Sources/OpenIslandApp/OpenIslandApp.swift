@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Darwin
 
 @MainActor
 final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
@@ -31,6 +32,9 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
             harnessRuntimeMonitor.recordMilestone("modelStarted")
 
             if let scenario = harnessLaunchConfiguration.scenario {
+                if ProcessInfo.processInfo.environment["OPEN_ISLAND_HARNESS_NPU_DEMO"] == "1" {
+                    model.npuMonitor.loadDemo()
+                }
                 model.loadDebugSnapshot(
                     scenario.snapshot(),
                     presentOverlay: harnessLaunchConfiguration.presentOverlay
@@ -39,6 +43,10 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
 
             // Hide all windows on launch — settings opens on demand only.
             OpenIslandAppDelegate.hideAllAppWindows()
+            if harnessLaunchConfiguration.scenario != nil,
+               ProcessInfo.processInfo.environment["OPEN_ISLAND_HARNESS_NPU_CONNECTION"] == "1" {
+                model.showNPUConnection()
+            }
 
             harnessRuntimeMonitor.recordMilestone("bootstrapCompleted")
 
@@ -75,6 +83,10 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        model.npuMonitor.disconnect()
+    }
+
     private static func hideAllAppWindows() {
         for window in NSApp.windows {
             window.orderOut(nil)
@@ -87,7 +99,6 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main
 struct OpenIslandApp: App {
     @NSApplicationDelegateAdaptor(OpenIslandAppDelegate.self)
     private var appDelegate
@@ -108,6 +119,22 @@ struct OpenIslandApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
         }
+    }
+}
+
+/// SSH invokes this executable as its local authentication helper. Dispatch
+/// before SwiftUI creates the app delegate, bridge, or any monitoring windows.
+@main
+enum OpenIslandEntryPoint {
+    @MainActor
+    static func main() {
+        if let socket = ProcessInfo.processInfo.environment["NPU_MONITOR_ASKPASS_SOCKET"] {
+            exit(AskPassBroker.runHelper(
+                socketPath: socket,
+                prompt: CommandLine.arguments.dropFirst().joined(separator: " ")
+            ))
+        }
+        OpenIslandApp.main()
     }
 }
 

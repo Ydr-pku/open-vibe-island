@@ -228,3 +228,25 @@
 
 /* Window Titles */
 "window.settings" = "Open Island 設定";
+
+/* NPU monitor */
+"npu.connection.title" = "NPU · SSH 連線";
+"npu.compact.help" = "NPU HBM 已用百分比 / 平均 AI Core 使用率";
+"npu.processes.title" = "NPU 程序 · 晶片 / PID / 名稱 / 記憶體";
+"npu.processes.empty" = "目前無 NPU 執行程序";
+"npu.disconnect" = "中斷連線";
+"npu.connect" = "連線並監控";
+"npu.connecting" = "正在連線，等待首次取樣…";
+"npu.connected" = "已連線，關閉此視窗後仍會繼續監控。";
+"npu.disconnected" = "透過 SSH 連線後查看 NPU 執行程序。";
+"npu.failed" = "連線失敗，請開啟 SSH 重新連線。";
+"npu.stale" = "取樣已暫停或資料已過期";
+"npu.chips" = "個晶片";
+"npu.address" = "SSH 位址";
+"npu.password" = "SSH 密碼";
+"npu.credentials.help" = "密碼僅用於本次連線，不會儲存。";
+"npu.interval" = "更新間隔";
+"npu.connection.help" = "支援直連密碼認證，首次連線需確認主機指紋。";
+"npu.trust.title" = "核對 SSH 主機指紋";
+"npu.trust.confirm" = "信任並連線";
+"npu.cancel" = "取消";

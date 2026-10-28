@@ -48,7 +48,8 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 ## Features
 
 - **Notch overlay** — sits in the notch area on notch Macs, falls back to a compact top-center bar on external displays or non-notch Macs
-- **Usage overview** — manual expansion shows account and local token history without session statistics or a session list; tracking continues in the background
+- **Usage overview** — manual expansion shows account and local token history above NPU processes, without agent session statistics or a session list; tracking continues in the background. With Codex usage enabled, the closed right lane shows remaining quota and reset-window time percentages, including rollout rate-limit fallback; unavailable values remain explicit unknowns.
+- **Remote NPU monitor** — the closed left lane shows a gray NPU when disconnected and aggregate HBM used / average AI Core utilization when connected. Expand and click SSH to open the connection window. One app-owned direct password SSH session samples only `npu-smi info`, by default every two seconds; terminal SSH sessions are not reused. Verify the host fingerprint on first connection. Credentials remain in memory; the validated address may be remembered. Monitoring continues while collapsed or after closing the connection window, and ends on disconnect or application exit. Missing metrics and stale samples are not reported as zero. The process list preserves chip/PID rows and scrolls after six rows. Agent approval/question/completion notifications retain priority over the overview.
 - **Settings** — hook install/uninstall, usage dashboard, General, Display, Sound, Shortcuts, Lab, About
 - **Notification mode** — auto-height panel for permission requests, questions, and task completion reminders, independent of the compact usage overview
 - **Notification sounds** — configurable system sounds with mute toggle

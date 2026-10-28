@@ -25,7 +25,7 @@ enum IslandRightSlotContent: Equatable {
     case count(Int)              // "×N" badge
     case agents([AgentGridCell]) // balanced grid, one tile per session
     case usage(
-        quotaRemainingPercentage: Int,
+        quotaRemainingPercentage: Int?,
         resetTimeRemainingPercentage: Int?
     )
 }
@@ -46,10 +46,11 @@ struct V6RightSlotView: View {
         case .agents(let cells):
             AgentsGridBody(cells: cells)
         case .usage(let quotaRemainingPercentage, let resetTimeRemainingPercentage):
-            let resetText = resetTimeRemainingPercentage.map { "\($0)%" } ?? "--%"
+            let quotaText = quotaRemainingPercentage.map { "\($0)%" } ?? "—%"
+            let resetText = resetTimeRemainingPercentage.map { "\($0)%" } ?? "—%"
             HStack(spacing: 4) {
-                Text("Q\(quotaRemainingPercentage)%")
-                    .foregroundStyle(remainingQuotaColor(quotaRemainingPercentage))
+                Text("Q\(quotaText)")
+                    .foregroundStyle(quotaRemainingPercentage.map(remainingQuotaColor) ?? .white.opacity(0.68))
                 Text("T\(resetText)")
                     .foregroundStyle(.white.opacity(0.68))
             }
@@ -77,8 +78,9 @@ struct V6RightSlotView: View {
             let geom = cellGeometry(rowCount: rows.count)
             return CGFloat(maxRow) * geom.cell + CGFloat(max(0, maxRow - 1)) * geom.gap
         case .usage(let quotaRemainingPercentage, let resetTimeRemainingPercentage):
-            let timeText = resetTimeRemainingPercentage.map(String.init) ?? "--"
-            let characterCount = "Q\(quotaRemainingPercentage)% T\(timeText)%".count
+            let quotaText = quotaRemainingPercentage.map(String.init) ?? "—"
+            let timeText = resetTimeRemainingPercentage.map(String.init) ?? "—"
+            let characterCount = "Q\(quotaText)% T\(timeText)%".count
             return CGFloat(Double(characterCount) * 6.2)
         }
     }
@@ -251,6 +253,31 @@ struct V6ClosedPill: View {
     /// External mode only — minimum pill width (locked). Defaults to the
     /// width that fits just the glyph.
     var minWidth: CGFloat = 70
+    var npuMonitor: MonitorStore? = nil
+
+    static func contentWidth(layout: V6ClosedLayout, height: CGFloat, physicalNotchWidth: CGFloat,
+                             label: String?, rightSlot: IslandRightSlotContent?, minWidth: CGFloat = 70) -> CGFloat {
+        let pad = height / 2
+        let leftW = NPUIslandPresentation.compactWidth
+        let rightW = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
+        if layout == .macbook {
+            return physicalNotchWidth + 2 * max(44, max(leftW, rightW) + pad)
+        }
+        let labelW = label.map { 6 + V6CenterLabelView.intrinsicWidth(of: $0) } ?? 0
+        return max(minWidth, pad * 2 + leftW + labelW + (rightSlot == nil ? 0 : 6 + rightW))
+    }
+
+    @ViewBuilder
+    private var leftContent: some View {
+        if let npuMonitor {
+            NPUClosedStatusView(monitor: npuMonitor)
+        } else {
+            Text("NPU")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.4))
+                .frame(width: NPUIslandPresentation.compactWidth, alignment: .leading)
+        }
+    }
 
     var body: some View {
         switch layout {
@@ -271,7 +298,7 @@ struct V6ClosedPill: View {
     // MARK: External (fluid)
 
     private var externalBody: some View {
-        let glyphW: CGFloat = 24
+        let glyphW = NPUIslandPresentation.compactWidth
         let labelW = label.map { V6CenterLabelView.intrinsicWidth(of: $0) } ?? 0
         let rightW = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
 
@@ -285,7 +312,7 @@ struct V6ClosedPill: View {
                 .fill(V6Palette.ink)
 
             HStack(spacing: 0) {
-                UnifiedBars(mode: mode, size: 24)
+                leftContent
                     .frame(width: glyphW, height: 24)
 
                 if let label {
@@ -317,17 +344,16 @@ struct V6ClosedPill: View {
     // MARK: MacBook (outer width locked)
 
     private var macbookBody: some View {
-        let rightSlotWidth = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
-        let halfReserve = max(44, rightSlotWidth + pad)
-        let outer = halfReserve + physicalNotchWidth + halfReserve
+        let outer = Self.contentWidth(layout: .macbook, height: height, physicalNotchWidth: physicalNotchWidth,
+                                      label: nil, rightSlot: rightSlot)
 
         return ZStack {
             V6ClosedPillShape()
                 .fill(V6Palette.ink)
 
             HStack(spacing: 0) {
-                UnifiedBars(mode: mode, size: 24)
-                    .frame(width: 24, height: 24)
+                leftContent
+                    .frame(width: NPUIslandPresentation.compactWidth, height: 24)
 
                 Spacer(minLength: 0)
 
@@ -349,7 +375,7 @@ enum V6ClosedLayout: Equatable {
 private enum RightSlotKey: Hashable {
     case count(Int)
     case agents(Int)
-    case usage(Int, Int?)
+    case usage(Int?, Int?)
 
     init(_ content: IslandRightSlotContent) {
         switch content {

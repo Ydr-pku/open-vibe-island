@@ -1,0 +1,270 @@
+import AppKit
+import SwiftUI
+
+/// Shared sizing and freshness rules for both the panel and its hit area.
+enum NPUIslandPresentation {
+    static let compactWidth: CGFloat = 112
+    static let rowHeight: CGFloat = 24
+    static let visibleRows = 6
+
+    static func isFresh(state: ConnectionState, isPaused: Bool, lastUpdated: Date?, refreshInterval: Double, at date: Date) -> Bool {
+        guard state == .connected, !isPaused, let lastUpdated else { return false }
+        return date.timeIntervalSince(lastUpdated) <= max(10, refreshInterval * 3 + 2)
+    }
+
+    @MainActor
+    static func contentHeight(for monitor: MonitorStore) -> CGFloat {
+        guard monitor.state == .connected, let snapshot = monitor.snapshot else { return 84 }
+        return 68 + rowHeight * CGFloat(max(1, min(visibleRows, snapshot.processes.count)))
+    }
+
+    static func percentage(_ value: Double?) -> String {
+        value.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—%"
+    }
+}
+
+struct NPUClosedStatusView: View {
+    @ObservedObject var monitor: MonitorStore
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 2)) { context in
+            let fresh = NPUIslandPresentation.isFresh(
+                state: monitor.state, isPaused: monitor.isPaused,
+                lastUpdated: monitor.lastUpdated, refreshInterval: monitor.refreshInterval, at: context.date
+            )
+            Group {
+                if monitor.state == .connected {
+                    HStack(spacing: 5) {
+                        if monitor.isDemo { Text("D").foregroundStyle(.orange) }
+                        Text("HBM\(NPUIslandPresentation.percentage(fresh ? monitor.snapshot?.hbmPercent : nil))")
+                            .foregroundStyle(fresh ? .purple.opacity(0.95) : .white.opacity(0.4))
+                        Text("AI\(NPUIslandPresentation.percentage(fresh ? monitor.snapshot?.averageUtilization : nil))")
+                            .foregroundStyle(fresh ? .cyan.opacity(0.95) : .white.opacity(0.4))
+                    }
+                } else {
+                    HStack(spacing: 5) {
+                        if monitor.state == .connecting {
+                            ProgressView().controlSize(.mini)
+                        } else if monitor.state == .failed {
+                            Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+                        }
+                        Text("NPU").foregroundStyle(.white.opacity(0.4))
+                    }
+                }
+            }
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(width: NPUIslandPresentation.compactWidth, alignment: .leading)
+            .help(LanguageManager.shared.t("npu.compact.help"))
+            .accessibilityLabel(LanguageManager.shared.t("npu.compact.help"))
+        }
+    }
+}
+
+struct NPUProcessPanel: View {
+    @ObservedObject var monitor: MonitorStore
+    var onConnect: () -> Void
+    private var lang: LanguageManager { .shared }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 2)) { context in
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(lang.t("npu.processes.title")).font(.system(size: 10, weight: .semibold))
+                    if monitor.isDemo { Text("DEMO").foregroundStyle(.orange) }
+                    Spacer(minLength: 0)
+                    if monitor.state == .connected {
+                        Text(monitor.endpointLabel)
+                            .lineLimit(1).truncationMode(.middle)
+                            .foregroundStyle(.white.opacity(0.45))
+                        Button { monitor.disconnect() } label: {
+                            Image(systemName: "xmark.circle")
+                        }.help(lang.t("npu.disconnect"))
+                    } else {
+                        Button("SSH", action: onConnect)
+                    }
+                }
+                .font(.system(size: 10, design: .monospaced))
+                .buttonStyle(.plain)
+
+                if monitor.state == .connected, let snapshot = monitor.snapshot {
+                    let fresh = NPUIslandPresentation.isFresh(
+                        state: monitor.state, isPaused: monitor.isPaused, lastUpdated: monitor.lastUpdated,
+                        refreshInterval: monitor.refreshInterval, at: context.date
+                    )
+                    HStack {
+                        Text(fresh ? "\(snapshot.devices.count) \(lang.t("npu.chips"))" : lang.t("npu.stale"))
+                        Spacer()
+                        if let date = monitor.lastUpdated {
+                            Text(date.formatted(date: .omitted, time: .standard))
+                        }
+                    }
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(fresh ? .white.opacity(0.38) : .orange)
+
+                    if snapshot.processes.isEmpty {
+                        Text(lang.t("npu.processes.empty"))
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                            .frame(height: NPUIslandPresentation.rowHeight)
+                    } else {
+                        ScrollView(.vertical) {
+                            LazyVStack(spacing: 0) {
+                                ForEach(snapshot.processes.sorted {
+                                    if $0.npuID != $1.npuID { return $0.npuID < $1.npuID }
+                                    if $0.chipID != $1.chipID { return $0.chipID < $1.chipID }
+                                    return $0.pid < $1.pid
+                                }) { process in
+                                    processRow(process)
+                                }
+                            }
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .frame(height: NPUIslandPresentation.rowHeight * CGFloat(min(NPUIslandPresentation.visibleRows, snapshot.processes.count)))
+                        .opacity(fresh ? 1 : 0.45)
+                    }
+                } else {
+                    Text(statusMessage)
+                        .font(.system(size: 11)).foregroundStyle(monitor.state == .failed ? .orange : .white.opacity(0.42))
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                        .help(monitor.errorMessage ?? "")
+                }
+            }
+            .padding(10)
+            .frame(height: NPUIslandPresentation.contentHeight(for: monitor), alignment: .top)
+            .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+            .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.055), lineWidth: 1) }
+        }
+    }
+
+    private var statusMessage: String {
+        switch monitor.state {
+        case .connecting: lang.t("npu.connecting")
+        case .failed: monitor.errorMessage ?? lang.t("npu.failed")
+        case .disconnected: lang.t("npu.disconnected")
+        case .connected: lang.t("npu.stale")
+        }
+    }
+
+    private func processRow(_ process: NPUProcess) -> some View {
+        HStack(spacing: 8) {
+            Text("\(process.npuID):\(process.chipID)").frame(width: 28, alignment: .leading)
+                .foregroundStyle(.cyan.opacity(0.8))
+            Text(String(process.pid)).frame(width: 54, alignment: .leading)
+                .foregroundStyle(.white.opacity(0.55))
+            Text(process.name).lineLimit(1).truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(process.memoryMB.map { "\(Int($0.rounded())) MiB" } ?? "— MiB")
+                .foregroundStyle(.white.opacity(0.6))
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .frame(height: NPUIslandPresentation.rowHeight)
+        .help("NPU \(process.npuID) · Chip \(process.chipID) · PID \(process.pid) · \(process.name)")
+    }
+}
+
+@MainActor
+final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate {
+    private let monitor: MonitorStore
+
+    init(monitor: MonitorStore) {
+        self.monitor = monitor
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 330),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false
+        )
+        window.title = LanguageManager.shared.t("npu.connection.title")
+        window.identifier = NSUserInterfaceItemIdentifier("OpenIsland.NPUConnection")
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        window.delegate = self
+        window.contentView = NSHostingView(rootView: NPUConnectionView(monitor: monitor))
+        window.center()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func show() {
+        showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        monitor.password = ""
+        if monitor.state == .connecting { monitor.disconnect() }
+    }
+}
+
+private struct NPUConnectionView: View {
+    @ObservedObject var monitor: MonitorStore
+    private enum Field { case address, password }
+    @FocusState private var focusedField: Field?
+    private var lang: LanguageManager { .shared }
+    private var active: Bool { monitor.state == .connecting || monitor.state == .connected }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(lang.t("npu.connection.title")).font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(lang.t("npu.address")).font(.caption).foregroundStyle(.secondary)
+                TextField("ssh -p 22 user@host", text: $monitor.connectionInput)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textFieldStyle(.plain).foregroundStyle(.white)
+                    .padding(8).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                    .disabled(active).focused($focusedField, equals: .address)
+                    .accessibilityLabel(lang.t("npu.address"))
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(lang.t("npu.password")).font(.caption).foregroundStyle(.secondary)
+                SecureField(lang.t("npu.password"), text: $monitor.password)
+                    .textFieldStyle(.plain).foregroundStyle(.white)
+                    .padding(8).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                    .disabled(active).focused($focusedField, equals: .password)
+                    .onSubmit { if !active { monitor.connect() } }
+            }
+            Text(lang.t("npu.credentials.help"))
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text(lang.t("npu.interval"))
+                Picker("", selection: $monitor.refreshInterval) {
+                    ForEach([1.0, 2.0, 3.0, 5.0, 10.0], id: \.self) { seconds in
+                        Text("\(Int(seconds)) s").tag(seconds)
+                    }
+                }.labelsHidden().frame(width: 90)
+                Spacer()
+                if monitor.state == .connecting { ProgressView().controlSize(.small) }
+                Button(active ? lang.t("npu.disconnect") : lang.t("npu.connect")) {
+                    active ? monitor.disconnect() : monitor.connect()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            if let error = monitor.errorMessage {
+                ScrollView { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+            } else {
+                Text(monitor.state == .connected ? lang.t("npu.connected") : lang.t("npu.connection.help"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .frame(width: 460, height: 330)
+        .preferredColorScheme(.dark)
+        .onAppear { focusedField = monitor.connectionInput.isEmpty ? .address : .password }
+        .sheet(item: $monitor.hostTrustRequest) { request in
+            VStack(alignment: .leading, spacing: 18) {
+                Text(lang.t("npu.trust.title")).font(.headline)
+                ScrollView { Text(request.prompt).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
+                    .frame(maxHeight: 180)
+                HStack {
+                    Spacer()
+                    Button(lang.t("npu.cancel")) { monitor.rejectHost() }
+                    Button(lang.t("npu.trust.confirm")) { monitor.approveHost() }
+                }
+            }
+            .padding(24).frame(width: 460).interactiveDismissDisabled()
+        }
+    }
+}

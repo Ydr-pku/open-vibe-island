@@ -8,7 +8,7 @@ import OpenIslandCore
 struct AgentsGridRightSlotTests {
     @Test
     func liveOfficialQuotaOverridesConfiguredTaskRightSlot() {
-        let model = AppModel()
+        let model = makeModel(showCodexUsage: true)
         model.islandRightSlot = .agents
         model.hooks.codexUsageSnapshot = CodexUsageSnapshot(
             sourceFilePath: CodexAppServerClient.rateLimitsSourceIdentifier,
@@ -41,11 +41,67 @@ struct AgentsGridRightSlotTests {
         #expect(resetTime == 50)
     }
 
+    @Test
+    func rolloutAccountRateLimitsRemainVisibleInCompactIsland() {
+        let model = makeModel(showCodexUsage: true)
+        model.islandRightSlot = .count
+        model.hooks.codexUsageSnapshot = quotaSnapshot(
+            source: "/tmp/sessions/rollout.jsonl",
+            usedPercentage: 27
+        )
+
+        guard case let .usage(remaining, resetTime)? = model.islandClosedRightSlotContent() else {
+            Issue.record("Expected rollout rate limits to use the quota slot")
+            return
+        }
+        #expect(remaining == 73)
+        #expect(resetTime == 50)
+    }
+
+    @Test
+    func missingQuotaNeverFallsBackToTaskCountWhileUsageIsEnabled() {
+        let model = makeModel(showCodexUsage: true)
+        model.islandRightSlot = .count
+        model.state = SessionState(sessions: (0..<12).map {
+            makeSession(id: "s-\($0)", firstSeenAt: .now, updatedAt: .now)
+        })
+
+        #expect(model.islandClosedRightSlotContent() == .usage(
+            quotaRemainingPercentage: nil,
+            resetTimeRemainingPercentage: nil
+        ))
+
+        model.hooks.codexUsageSnapshot = CodexUsageSnapshot(
+            sourceFilePath: CodexAppServerClient.rateLimitsSourceIdentifier,
+            capturedAt: .now,
+            windows: []
+        )
+        #expect(model.islandClosedRightSlotContent() == .usage(
+            quotaRemainingPercentage: nil,
+            resetTimeRemainingPercentage: nil
+        ))
+    }
+
+    @Test
+    func disablingQuotaRestoresConfiguredTaskCountEvenWithLiveQuota() {
+        let model = makeModel()
+        model.islandRightSlot = .count
+        model.state = SessionState(sessions: [
+            makeSession(id: "one", firstSeenAt: .now, updatedAt: .now)
+        ])
+        model.hooks.codexUsageSnapshot = quotaSnapshot(
+            source: CodexAppServerClient.rateLimitsSourceIdentifier,
+            usedPercentage: 27
+        )
+
+        #expect(model.islandClosedRightSlotContent() == .count(1))
+    }
+
     /// At bulk first observation (e.g. app launch) ties are broken by
     /// session.firstSeenAt so historical order is preserved.
     @Test
     func bulkFirstObservationOrdersByHistoricalFirstSeenAt() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
 
         let now = Date(timeIntervalSince1970: 100_000)
@@ -80,7 +136,7 @@ struct AgentsGridRightSlotTests {
     /// observation-time.
     @Test
     func newlyObservedSessionAlwaysLandsAtTheEndRegardlessOfHistoricalTime() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
 
         let now = Date(timeIntervalSince1970: 200_000)
@@ -113,7 +169,7 @@ struct AgentsGridRightSlotTests {
     /// again — not re-observed as a newcomer.
     @Test
     func returningSessionKeepsItsOriginalSlot() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
 
         let now = Date(timeIntervalSince1970: 300_000)
@@ -144,7 +200,7 @@ struct AgentsGridRightSlotTests {
     /// overflow cell showing the remainder count.
     @Test
     func moreThanNineSessionsFoldIntoOverflow() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
         let now = Date(timeIntervalSince1970: 200_000)
 
@@ -175,7 +231,7 @@ struct AgentsGridRightSlotTests {
     /// everything else (completed, stale) to `.idle`.
     @Test
     func cellStateReflectsSessionPhase() {
-        let model = AppModel()
+        let model = makeModel()
         model.islandRightSlot = .agents
         let now = Date(timeIntervalSince1970: 300_000)
 
@@ -211,6 +267,31 @@ struct AgentsGridRightSlotTests {
     }
 
     // MARK: - helpers
+
+    private func makeModel(showCodexUsage: Bool = false) -> AppModel {
+        let model = AppModel()
+        // Resolve the display profile before selecting a task slot. Otherwise
+        // the first preference update can switch from top-bar to notch while
+        // the test is running on a real notched display.
+        model.refreshOverlayPlacement()
+        model.showCodexUsage = showCodexUsage
+        return model
+    }
+
+    private func quotaSnapshot(source: String, usedPercentage: Double) -> CodexUsageSnapshot {
+        CodexUsageSnapshot(
+            sourceFilePath: source,
+            capturedAt: .now,
+            windows: [CodexUsageWindow(
+                key: "primary",
+                label: "5h",
+                usedPercentage: usedPercentage,
+                leftPercentage: 100 - usedPercentage,
+                windowMinutes: 300,
+                resetsAt: .now.addingTimeInterval(2.5 * 60 * 60)
+            )]
+        )
+    }
 
     private static func cellFor(_ session: AgentSession) -> AgentGridCell {
         let color = Color(hex: session.tool.brandColorHex) ?? .gray

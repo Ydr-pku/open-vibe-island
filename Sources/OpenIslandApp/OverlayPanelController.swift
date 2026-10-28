@@ -370,7 +370,8 @@ final class OverlayPanelController {
     func openedPanelWidth(for screen: NSScreen?) -> CGFloat {
         guard let screen else { return Self.preferredTopBarOpenedPanelWidth }
         let preferredWidth = screen.safeAreaInsets.top > 0
-            ? Self.preferredNotchOpenedPanelWidth
+            ? max(Self.preferredNotchOpenedPanelWidth,
+                  IslandChromeMetrics.minimumNotchedOpenedWidth(notchWidth: screen.notchSize.width))
             : Self.preferredTopBarOpenedPanelWidth
         return max(360, min(preferredWidth, screen.visibleFrame.width - 32))
     }
@@ -488,13 +489,15 @@ final class OverlayPanelController {
     }
 
     private func closedPanelWidth(for model: AppModel, on screen: NSScreen) -> CGFloat {
-        let notchWidth = screen.notchSize.width
         let isNotched = screen.safeAreaInsets.top > 0
-        return Self.closedPanelWidth(
-            notchWidth: notchWidth,
-            isNotchedDisplay: isNotched,
-            notchStatus: model.notchStatus
+        let width = V6ClosedPill.contentWidth(
+            layout: isNotched ? .macbook : .external,
+            height: screen.islandClosedHeight,
+            physicalNotchWidth: isNotched ? screen.notchSize.width : 0,
+            label: isNotched ? nil : model.islandClosedLabel(),
+            rightSlot: model.islandClosedRightSlotContent()
         )
+        return width * (model.notchStatus == .popping ? 1.04 : 1)
     }
 
     private func openedContentHeight(for model: AppModel) -> CGFloat {
@@ -508,8 +511,10 @@ final class OverlayPanelController {
             : 0
 
         if !isNotificationMode {
-            // Manual expansion shows usage only, regardless of tracked sessions.
-            return max(Self.openedEmptyStateHeight, usageHistoryHeight)
+            let hintHeight: CGFloat = !model.hasAnyInstalledAgent
+                && !(model.showCodexUsage && model.hasCodexUsageHistory) ? 60 : 0
+            return max(Self.openedEmptyStateHeight,
+                       hintHeight + usageHistoryHeight + 8 + NPUIslandPresentation.contentHeight(for: model.npuMonitor))
         }
 
         // Use SwiftUI-measured height when available (accurate after first render).
