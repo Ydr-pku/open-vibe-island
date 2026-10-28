@@ -156,7 +156,9 @@ final class AskPassBroker: @unchecked Sendable {
 protocol NPUTransport: AnyObject {
     var onOutput: ((String) -> Void)? { get set }
     var onErrorOutput: ((String) -> Void)? { get set }
-    var onExit: ((Int32) -> Void)? { get set }
+    /// Delivered only after stderr reaches EOF so the exit status and complete
+    /// diagnostic are classified together, even if OS callbacks race.
+    var onExit: ((Int32, String) -> Void)? { get set }
     var onTrust: ((String, @escaping (Bool) -> Void) -> Void)? { get set }
     func start(endpoint: SSHEndpoint, password: String) throws
     func requestSample() throws
@@ -181,7 +183,7 @@ final class SSHTransport: NPUTransport, @unchecked Sendable {
     private let stateLock = NSLock()
     var onOutput: ((String) -> Void)?
     var onErrorOutput: ((String) -> Void)?
-    var onExit: ((Int32) -> Void)?
+    var onExit: ((Int32, String) -> Void)?
     var onTrust: ((String, @escaping (Bool) -> Void) -> Void)?
 
     static func knownHostsURL() throws -> URL {
@@ -244,31 +246,60 @@ final class SSHTransport: NPUTransport, @unchecked Sendable {
         environment["DISPLAY"] = "npu-monitor:0"
         environment["TERM"] = "dumb"
         process.environment = environment
+        try launch(process, broker: broker)
+    }
+
+    /// The same process/pipe lifecycle is used by SSH and the local test
+    /// executable. Error output must drain continuously to avoid a full pipe.
+    private func launch(_ process: Process, broker: AskPassBroker?) throws {
         let input = Pipe(), output = Pipe(), errors = Pipe()
         self.input = input; self.output = output; self.errors = errors
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
+        let errorDrain = SSHErrorDrain(handle: errors.fileHandleForReading) { [weak self] text in
+            self?.onErrorOutput?(text)
+        }
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             if !data.isEmpty { self?.onOutput?(String(decoding: data, as: UTF8.self)) }
         }
-        errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if !data.isEmpty { self?.onErrorOutput?(String(decoding: data, as: UTF8.self)) }
-        }
-        process.terminationHandler = { [weak self, weak broker] process in
-            guard let self else { return }
-            self.stateLock.lock()
-            self.secret = nil
-            let notifyExit = !self.stopped
-            self.stateLock.unlock()
+        process.terminationHandler = { [weak self, weak broker, errorDrain] process in
             broker?.stop()
-            if notifyExit { self.onExit?(process.terminationStatus) }
+            let code = process.terminationStatus
+            errorDrain.afterEOF { [weak self] detail in
+                guard let self else { return }
+                self.stateLock.lock()
+                self.secret = nil
+                let notifyExit = !self.stopped
+                self.stateLock.unlock()
+                if notifyExit { self.onExit?(code, detail) }
+            }
         }
         self.process = process
-        do { try process.run() } catch { stop(); throw error }
+        do {
+            try process.run()
+            // Parent-side pipe descriptors must not prevent EOF after the
+            // child exits. The child already owns its duplicated descriptors.
+            try? errors.fileHandleForWriting.close()
+            errorDrain.start()
+        } catch {
+            errorDrain.cancel()
+            stop()
+            throw error
+        }
     }
+
+    #if DEBUG
+    /// Runs only local synthetic commands in regression tests; production SSH
+    /// continues to use the fixed executable and command above.
+    func startLocalTestProcess(executableURL: URL, arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        try launch(process, broker: nil)
+    }
+    #endif
 
     func requestSample() throws {
         guard let process, process.isRunning, let input else {
@@ -285,7 +316,7 @@ final class SSHTransport: NPUTransport, @unchecked Sendable {
         broker?.stop()
         broker = nil
         output?.fileHandleForReading.readabilityHandler = nil
-        errors?.fileHandleForReading.readabilityHandler = nil
+        try? errors?.fileHandleForReading.close()
         try? input?.fileHandleForWriting.close()
         if let process, process.isRunning { process.terminate() }
         process = nil
@@ -293,4 +324,60 @@ final class SSHTransport: NPUTransport, @unchecked Sendable {
     }
 
     deinit { stop() }
+}
+
+/// A single reader owns stderr, retaining only a bounded diagnostic tail. The
+/// completion group orders process termination after every byte through EOF.
+private final class SSHErrorDrain: @unchecked Sendable {
+    private let handle: FileHandle
+    private let onOutput: (String) -> Void
+    private let done = DispatchGroup()
+    private let lock = NSLock()
+    private var tail = Data()
+    private var reachedEOF = false
+
+    init(handle: FileHandle, onOutput: @escaping (String) -> Void) {
+        self.handle = handle
+        self.onOutput = onOutput
+        done.enter()
+    }
+
+    func start() {
+        DispatchQueue.global(qos: .utility).async { [self] in
+            defer { done.leave() }
+            do {
+                while true {
+                    guard let data = try handle.read(upToCount: 4096), !data.isEmpty else {
+                        lock.lock(); reachedEOF = true; lock.unlock()
+                        break
+                    }
+                    lock.lock()
+                    tail.append(data)
+                    if tail.count > 8192 { tail = Data(tail.suffix(8192)) }
+                    lock.unlock()
+                    onOutput(String(decoding: data, as: UTF8.self))
+                }
+            } catch {
+                // An incomplete diagnostic cannot safely justify another
+                // authentication attempt, even if a fragment says network.
+            }
+        }
+    }
+
+    func afterEOF(_ completion: @escaping @Sendable (String) -> Void) {
+        done.notify(queue: .global(qos: .utility)) { [self] in
+            lock.lock()
+            let detail = reachedEOF
+                ? String(decoding: tail, as: UTF8.self)
+                : "SSH 错误输出读取不完整，已停止自动重连。"
+            lock.unlock()
+            completion(detail)
+        }
+    }
+
+    func cancel() {
+        try? handle.close()
+        // The reader is not started when process.run() fails.
+        done.leave()
+    }
 }
