@@ -70,6 +70,7 @@ struct NPUTransportTests {
         #expect(SSHTransport.sampleCommand == "npu-smi info\n")
     }
 
+    #if DEBUG
     @Test
     func sshExitWaitsForDelayedStderrAndIncludesAuthenticationFailure() throws {
         let transport = SSHTransport()
@@ -124,6 +125,7 @@ struct NPUTransportTests {
         #expect(Date().timeIntervalSince(start) < 1)
         #expect(exited.wait(timeout: .now() + 0.2) == .timedOut)
     }
+    #endif
 
     private func connectClient(_ path: String) throws -> Int32 {
         let client = socket(AF_UNIX, SOCK_STREAM, 0)

@@ -402,7 +402,7 @@ struct IslandPanelView: View {
             if isNotificationMode {
                 notificationSession
             } else {
-                NPUProcessPanel(monitor: npuMonitor, onConnect: model.showNPUConnection)
+                NPUProcessPanel(monitor: npuMonitor, persistence: model.npuConnectionPersistence, onConnect: model.showNPUConnection)
                     .padding(.horizontal, sessionListSideInset)
             }
 

@@ -91,6 +91,7 @@ struct NPUClosedStatusView: View {
 
 struct NPUProcessPanel: View {
     @ObservedObject var monitor: MonitorStore
+    @ObservedObject var persistence: NPUConnectionPersistence
     var onConnect: () -> Void
     private var lang: LanguageManager { .shared }
 
@@ -100,6 +101,13 @@ struct NPUProcessPanel: View {
                 HStack(spacing: 6) {
                     Text(lang.t("npu.processes.title")).font(.system(size: 10, weight: .semibold))
                     if monitor.isDemo { Text("DEMO").foregroundStyle(.orange) }
+                    if let notice = persistence.credentialNoticeKey {
+                        Button(action: onConnect) {
+                            Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+                        }
+                        .help(lang.t(notice))
+                        .accessibilityLabel(lang.t(notice))
+                    }
                     Spacer(minLength: 0)
                     if monitor.state == .connected {
                         Text(monitor.endpointLabel)
@@ -166,7 +174,8 @@ struct NPUProcessPanel: View {
     }
 
     private var statusMessage: String {
-        switch monitor.state {
+        if monitor.isReconnecting { return lang.t("npu.reconnecting") }
+        return switch monitor.state {
         case .connecting: lang.t("npu.connecting")
         case .failed: monitor.errorMessage ?? lang.t("npu.failed")
         case .disconnected: lang.t("npu.disconnected")
@@ -194,11 +203,13 @@ struct NPUProcessPanel: View {
 @MainActor
 final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate {
     private let monitor: MonitorStore
+    private let persistence: NPUConnectionPersistence
 
-    init(monitor: MonitorStore) {
+    init(monitor: MonitorStore, persistence: NPUConnectionPersistence) {
         self.monitor = monitor
+        self.persistence = persistence
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 330),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 400),
             styleMask: [.titled, .closable], backing: .buffered, defer: false
         )
         window.title = LanguageManager.shared.t("npu.connection.title")
@@ -207,13 +218,14 @@ final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate 
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
-        window.contentView = NSHostingView(rootView: NPUConnectionView(monitor: monitor))
+        window.contentView = NSHostingView(rootView: NPUConnectionView(monitor: monitor, persistence: persistence))
         window.center()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func show() {
+    func show(loadCredential: Bool = true) {
+        if loadCredential, window?.isVisible != true { persistence.prepareForDisplay() }
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
@@ -221,12 +233,14 @@ final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate 
 
     func windowWillClose(_ notification: Notification) {
         monitor.password = ""
-        if monitor.state == .connecting { monitor.disconnect() }
+        persistence.clearAutofill()
+        if monitor.hostTrustRequest != nil { monitor.rejectHost() }
     }
 }
 
 private struct NPUConnectionView: View {
     @ObservedObject var monitor: MonitorStore
+    @ObservedObject var persistence: NPUConnectionPersistence
     private enum Field { case address, password }
     @FocusState private var focusedField: Field?
     private var lang: LanguageManager { .shared }
@@ -237,7 +251,9 @@ private struct NPUConnectionView: View {
             Text(lang.t("npu.connection.title")).font(.title3.weight(.semibold))
             VStack(alignment: .leading, spacing: 4) {
                 Text(lang.t("npu.address")).font(.caption).foregroundStyle(.secondary)
-                TextField("ssh -p 22 user@host", text: $monitor.connectionInput)
+                TextField("ssh -p 22 user@host", text: Binding(
+                    get: { monitor.connectionInput }, set: { persistence.updateAddress($0) }
+                ))
                     .font(.system(size: 12, design: .monospaced))
                     .textFieldStyle(.plain).foregroundStyle(.white)
                     .padding(8).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
@@ -246,11 +262,13 @@ private struct NPUConnectionView: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(lang.t("npu.password")).font(.caption).foregroundStyle(.secondary)
-                SecureField(lang.t("npu.password"), text: $monitor.password)
+                SecureField(lang.t("npu.password"), text: Binding(
+                    get: { monitor.password }, set: { persistence.updatePassword($0) }
+                ))
                     .textFieldStyle(.plain).foregroundStyle(.white)
                     .padding(8).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
                     .disabled(active).focused($focusedField, equals: .password)
-                    .onSubmit { if !active { monitor.connect() } }
+                    .onSubmit { if !active { persistence.connect() } }
             }
             Text(lang.t("npu.credentials.help"))
                 .font(.caption).foregroundStyle(.secondary)
@@ -264,11 +282,16 @@ private struct NPUConnectionView: View {
                 Spacer()
                 if monitor.state == .connecting { ProgressView().controlSize(.small) }
                 Button(active ? lang.t("npu.disconnect") : lang.t("npu.connect")) {
-                    active ? monitor.disconnect() : monitor.connect()
+                    active ? monitor.disconnect() : persistence.connect()
                 }
                 .keyboardShortcut(.defaultAction)
             }
-            if let error = monitor.errorMessage {
+            if let notice = persistence.credentialNoticeKey {
+                Text(lang.t(notice)).font(.caption).foregroundStyle(.orange)
+            }
+            if monitor.isReconnecting {
+                Text(lang.t("npu.reconnecting")).font(.caption).foregroundStyle(.orange)
+            } else if let error = monitor.errorMessage {
                 ScrollView { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             } else {
                 Text(monitor.state == .connected ? lang.t("npu.connected") : lang.t("npu.connection.help"))
@@ -277,9 +300,10 @@ private struct NPUConnectionView: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 460, height: 330)
+        .frame(width: 460, height: 400)
         .preferredColorScheme(.dark)
         .onAppear { focusedField = monitor.connectionInput.isEmpty ? .address : .password }
+        .onChange(of: monitor.connectionInput) { _, address in persistence.addressDidChange(address) }
         .sheet(item: $monitor.hostTrustRequest) { request in
             VStack(alignment: .leading, spacing: 18) {
                 Text(lang.t("npu.trust.title")).font(.headline)

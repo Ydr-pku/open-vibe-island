@@ -47,6 +47,9 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
                ProcessInfo.processInfo.environment["OPEN_ISLAND_HARNESS_NPU_CONNECTION"] == "1" {
                 model.showNPUConnection()
             }
+            if harnessLaunchConfiguration.scenario == nil {
+                model.restoreNPUConnection()
+            }
 
             harnessRuntimeMonitor.recordMilestone("bootstrapCompleted")
 
@@ -84,7 +87,7 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        model.npuMonitor.disconnect()
+        model.npuMonitor.shutdown()
     }
 
     private static func hideAllAppWindows() {

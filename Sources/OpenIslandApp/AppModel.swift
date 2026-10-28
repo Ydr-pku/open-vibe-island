@@ -69,11 +69,22 @@ final class AppModel {
     let codexAppServer = CodexAppServerCoordinator()
     let updateChecker = UpdateChecker()
     let npuMonitor = MonitorStore()
-    @ObservationIgnored private lazy var npuConnectionWindow = NPUConnectionWindowController(monitor: npuMonitor)
+    @ObservationIgnored lazy var npuConnectionPersistence: NPUConnectionPersistence = {
+        let persistence = NPUConnectionPersistence(monitor: npuMonitor)
+        persistence.onHostTrustRequired = { [weak self] in self?.showNPUConnection() }
+        return persistence
+    }()
+    @ObservationIgnored private lazy var npuConnectionWindow = NPUConnectionWindowController(
+        monitor: npuMonitor, persistence: npuConnectionPersistence
+    )
+
+    func restoreNPUConnection() {
+        npuConnectionPersistence.restoreIfNeeded()
+    }
 
     func showNPUConnection() {
         notchClose()
-        npuConnectionWindow.show()
+        npuConnectionWindow.show(loadCredential: !ignoresPointerExitDuringHarness)
     }
 
     var notchStatus: NotchStatus {
