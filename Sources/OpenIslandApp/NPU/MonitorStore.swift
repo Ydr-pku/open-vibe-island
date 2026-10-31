@@ -20,6 +20,8 @@ final class MonitorStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var hostTrustRequest: HostTrustRequest?
     @Published var lastUpdated: Date?
+    @Published private(set) var networkRates: [NetworkInterfaceRate] = []
+    @Published private(set) var networkLastUpdated: Date?
     @Published private(set) var endpointLabel = "尚未连接"
     /// Called after the first complete sample of a user-initiated session.
     /// The owner can persist credentials securely only after successful login.
@@ -27,6 +29,7 @@ final class MonitorStore: ObservableObject {
     var onUserDisconnect: (() -> Void)?
     var onPermanentFailure: (() -> Void)?
     private var transport: (any NPUTransport)?
+    private var networkTracker = NetworkTrafficTracker()
     private let makeTransport: () -> any NPUTransport
     private let reconnectDelay: (Int) -> TimeInterval
     private let defaults: UserDefaults
@@ -177,6 +180,9 @@ final class MonitorStore: ObservableObject {
     /// also used while waiting for a retry, retaining only the active secret.
     private func stopTransport() {
         generation = UUID()
+        networkTracker.reset()
+        networkRates = []
+        networkLastUpdated = nil
         reconnectTask?.cancel(); reconnectTask = nil
         trustReply?(false); trustReply = nil; hostTrustRequest = nil
         settle?.cancel(); settle = nil
@@ -198,6 +204,9 @@ final class MonitorStore: ObservableObject {
     func togglePause() {
         guard state == .connected else { return }
         isPaused.toggle()
+        networkTracker.reset()
+        networkRates = []
+        networkLastUpdated = nil
         if !isPaused { nextSample = Date() }
     }
 
@@ -237,8 +246,12 @@ final class MonitorStore: ObservableObject {
         let plain = buffer.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)
         let hasPrompt = plain.range(of: "[#$%>]\\s*$", options: .regularExpression) != nil
         guard hasPrompt else { return }
+        if transport?.requiresNetworkSection == true && !NetworkTrafficParser.hasCompleteSection(buffer) { return }
         do {
             let sample = try NPUParser.parse(buffer)
+            let networkCounters = NetworkTrafficParser.parse(buffer)
+            networkRates = networkTracker.update(networkCounters, at: ProcessInfo.processInfo.systemUptime)
+            networkLastUpdated = networkCounters == nil ? nil : sample.timestamp
             snapshot = sample
             lastUpdated = sample.timestamp
             history.append(sample)
@@ -351,12 +364,16 @@ final class MonitorStore: ObservableObject {
         for index in 0..<60 { history.append(Self.demoSnapshot(at: now.addingTimeInterval(Double(index - 59) * 2))) }
         snapshot = history.last
         lastUpdated = snapshot?.timestamp
+        networkRates = [NetworkInterfaceRate(name: "eth0", receivedPerSecond: 12_300_000, transmittedPerSecond: 280_000)]
+        networkLastUpdated = now
         nextSample = now.addingTimeInterval(refreshInterval)
     }
 
     private func appendDemo() {
         let sample = Self.demoSnapshot(at: Date())
         snapshot = sample; lastUpdated = sample.timestamp
+        networkRates = [NetworkInterfaceRate(name: "eth0", receivedPerSecond: 12_300_000, transmittedPerSecond: 280_000)]
+        networkLastUpdated = sample.timestamp
         history.append(sample)
         if history.count > 300 { history.removeFirst(history.count - 300) }
         nextSample = Date().addingTimeInterval(refreshInterval)

@@ -5,6 +5,57 @@ import Testing
 @MainActor
 struct NPUMonitorStoreTests {
     @Test
+    func liveTransportWaitsForNetworkTerminatorButNetworkReadIsOptional() async throws {
+        let (defaults, suite) = testDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let transport = FakeNPUTransport()
+        transport.requiresNetworkSection = true
+        let store = MonitorStore(defaults: defaults, startsTimer: false, makeTransport: { transport })
+        store.connectionInput = "root@node.example"
+        store.password = "secret"
+        store.connect()
+        transport.onOutput?(NPUParsingTests.fixture + "\nroot@node:~# printf '__OPEN_ISLAND_NET_END_V1__'\nroot@node:~# ")
+        try await Task.sleep(for: .milliseconds(450))
+        #expect(store.state == .connecting)
+        transport.onOutput?("\n" + NetworkTrafficParser.endMarker + "\nroot@node:~# ")
+        try await waitUntil { store.state == .connected }
+        #expect(store.snapshot?.devices.count == 4)
+        #expect(store.networkRates.isEmpty)
+        store.disconnect()
+    }
+
+    @Test
+    func networkRatesAreIndependentAndResetOnDisconnect() async throws {
+        let (defaults, suite) = testDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let transport = FakeNPUTransport()
+        let store = MonitorStore(defaults: defaults, startsTimer: false, makeTransport: { transport })
+        store.connectionInput = "root@node.example"
+        store.password = "secret"
+        store.connect()
+        transport.onOutput?(NPUParsingTests.fixture + NetworkTrafficTests.section() + "\nroot@node:~# ")
+        try await waitUntil { store.state == .connected }
+        #expect(store.networkRates.first?.name == "eth0")
+        #expect(store.networkRates.first?.receivedPerSecond == nil)
+
+        store.refreshNow()
+        transport.onOutput?(NPUParsingTests.fixture + NetworkTrafficTests.section(rx: 4000, tx: 3000) + "\nroot@node:~# ")
+        try await waitUntil { store.networkRates.first?.receivedPerSecond != nil }
+        #expect((store.networkRates.first?.receivedPerSecond ?? 0) > 0)
+        #expect(store.networkLastUpdated != nil)
+
+        store.refreshNow()
+        transport.onOutput?(NPUParsingTests.fixture + "\nroot@node:~# ")
+        try await waitUntil { store.networkRates.isEmpty }
+        #expect(store.state == .connected)
+        #expect(store.networkLastUpdated == nil)
+
+        store.disconnect()
+        #expect(store.networkRates.isEmpty)
+        #expect(store.networkLastUpdated == nil)
+    }
+
+    @Test
     func onlyMarksConnectedAfterACompleteSampleAndPreservesStaleDataOnDisconnect() async throws {
         let (defaults, suite) = testDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -457,6 +508,7 @@ struct NPUMonitorStoreTests {
 }
 
 private final class FakeNPUTransport: NPUTransport {
+    var requiresNetworkSection = false
     var onOutput: ((String) -> Void)?
     var onErrorOutput: ((String) -> Void)?
     var onExit: ((Int32, String) -> Void)?

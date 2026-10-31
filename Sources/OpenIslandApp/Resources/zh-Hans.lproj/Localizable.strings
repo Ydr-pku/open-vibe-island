@@ -237,6 +237,10 @@
 /* NPU monitor */
 "npu.connection.title" = "NPU · SSH 连接";
 "npu.compact.help" = "NPU HBM 已用百分比 / 平均 AI Core 利用率";
+"npu.network" = "网卡";
+"npu.network.download" = "下载";
+"npu.network.upload" = "上传";
+"npu.network.help" = "默认路由网卡的流量，包含远程机器上所有应用的网络活动。";
 "npu.processes.title" = "NPU 进程 · 芯片 / PID / 名称 / 显存";
 "npu.processes.empty" = "当前无 NPU 运行进程";
 "npu.disconnect" = "断开连接";

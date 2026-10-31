@@ -236,6 +236,10 @@
 /* NPU monitor */
 "npu.connection.title" = "NPU · SSH 連線";
 "npu.compact.help" = "NPU HBM 已用百分比 / 平均 AI Core 使用率";
+"npu.network" = "網卡";
+"npu.network.download" = "下載";
+"npu.network.upload" = "上傳";
+"npu.network.help" = "預設路由網卡的流量，包含遠端機器上所有應用程式的網路活動。";
 "npu.processes.title" = "NPU 程序 · 晶片 / PID / 名稱 / 記憶體";
 "npu.processes.empty" = "目前無 NPU 執行程序";
 "npu.disconnect" = "中斷連線";

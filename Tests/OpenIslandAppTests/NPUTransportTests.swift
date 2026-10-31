@@ -67,7 +67,9 @@ struct NPUTransportTests {
         for prompt in ["New password:", "Current password:", "Retype new password:", "Verification code:", "Password expired. Please change password:", "Password:\nVerification code:"] {
             #expect(!SSHTransport.isPasswordPrompt(prompt))
         }
-        #expect(SSHTransport.sampleCommand == "npu-smi info\n")
+        #expect(SSHTransport.sampleCommand.hasPrefix("npu-smi info; "))
+        #expect(SSHTransport.sampleCommand.contains("cat /proc/net/dev"))
+        #expect(SSHTransport.sampleCommand.contains(NetworkTrafficParser.endMarker))
     }
 
     #if DEBUG

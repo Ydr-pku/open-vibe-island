@@ -42,11 +42,22 @@ struct NPUIslandPresentationTests {
         #expect(NPUIslandPresentation.contentHeight(for: monitor) == 84)
         monitor.loadDemo()
         let rows = min(NPUIslandPresentation.visibleRows, monitor.snapshot?.processes.count ?? 0)
-        #expect(NPUIslandPresentation.contentHeight(for: monitor) == 68 + 90 + 8 + 24 * CGFloat(max(1, rows)))
+        #expect(NPUIslandPresentation.contentHeight(for: monitor) == 68 + 16 + 8 + 90 + 8 + 24 * CGFloat(max(1, rows)))
         #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 0) == 36)
         #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 1) == 36)
         #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 4) == 90)
         #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 8) == 90)
+    }
+
+    @Test
+    func networkSpeedFormattingAndHeight() {
+        #expect(NPUIslandPresentation.networkSpeed(nil) == "—")
+        #expect(NPUIslandPresentation.networkSpeed(.nan) == "—")
+        #expect(NPUIslandPresentation.networkSpeed(0) == "0 B/s")
+        #expect(NPUIslandPresentation.networkSpeed(1_500) == "1.5 KB/s")
+        #expect(NPUIslandPresentation.networkSpeed(12_300_000) == "12.3 MB/s")
+        #expect(NPUIslandPresentation.networkSectionHeight(interfaceCount: 0) == 16)
+        #expect(NPUIslandPresentation.networkSectionHeight(interfaceCount: 3) == 32)
     }
 
     @Test

@@ -237,6 +237,10 @@
 /* NPU monitor */
 "npu.connection.title" = "NPU · SSH connection";
 "npu.compact.help" = "NPU HBM used / average AI Core utilization";
+"npu.network" = "Network";
+"npu.network.download" = "Receive";
+"npu.network.upload" = "Send";
+"npu.network.help" = "Default-route interface traffic; includes all applications on the remote host.";
 "npu.processes.title" = "NPU processes · chip / PID / name / memory";
 "npu.processes.empty" = "No NPU processes running";
 "npu.disconnect" = "Disconnect";

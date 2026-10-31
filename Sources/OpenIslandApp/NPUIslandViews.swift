@@ -9,6 +9,8 @@ enum NPUIslandPresentation {
     static let visibleDeviceRows = 4
     static let utilizationHeaderHeight: CGFloat = 14
     static let utilizationHeaderSpacing: CGFloat = 4
+    static let networkRowHeight: CGFloat = 16
+    static let visibleNetworkRows = 2
     private static func textWidth(_ value: String) -> CGFloat {
         let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
         return ceil((value as NSString).size(withAttributes: [.font: font]).width)
@@ -46,8 +48,21 @@ enum NPUIslandPresentation {
     @MainActor
     static func contentHeight(for monitor: MonitorStore) -> CGFloat {
         guard monitor.state == .connected, let snapshot = monitor.snapshot else { return 84 }
-        return 68 + utilizationSectionHeight(deviceCount: snapshot.devices.count) + 8
+        return 68 + networkSectionHeight(interfaceCount: monitor.networkRates.count) + 8
+            + utilizationSectionHeight(deviceCount: snapshot.devices.count) + 8
             + rowHeight * CGFloat(max(1, min(visibleRows, snapshot.processes.count)))
+    }
+
+    static func networkSectionHeight(interfaceCount: Int) -> CGFloat {
+        networkRowHeight * CGFloat(max(1, min(visibleNetworkRows, interfaceCount)))
+    }
+
+    static func networkSpeed(_ value: Double?) -> String {
+        guard let value, value.isFinite, value >= 0 else { return "—" }
+        if value >= 1_000_000_000 { return String(format: "%.1f GB/s", value / 1_000_000_000) }
+        if value >= 1_000_000 { return String(format: "%.1f MB/s", value / 1_000_000) }
+        if value >= 1_000 { return String(format: "%.1f KB/s", value / 1_000) }
+        return String(format: "%.0f B/s", value)
     }
 
     static func utilizationSectionHeight(deviceCount: Int) -> CGFloat {
@@ -198,6 +213,25 @@ struct NPUProcessPanel: View {
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(fresh ? .white.opacity(0.38) : .orange)
 
+                    let networkFresh = NPUIslandPresentation.isFresh(
+                        state: monitor.state, isPaused: monitor.isPaused, lastUpdated: monitor.networkLastUpdated,
+                        refreshInterval: monitor.refreshInterval, at: context.date
+                    )
+                    ScrollView(.vertical) {
+                        VStack(spacing: 0) {
+                            if monitor.networkRates.isEmpty {
+                                networkRow(nil, fresh: false)
+                            } else {
+                                ForEach(monitor.networkRates) { rate in
+                                    networkRow(rate, fresh: networkFresh)
+                                }
+                            }
+                        }
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .scrollIndicators(monitor.networkRates.count > NPUIslandPresentation.visibleNetworkRows ? .visible : .hidden)
+                    .frame(height: NPUIslandPresentation.networkSectionHeight(interfaceCount: monitor.networkRates.count))
+
                     VStack(spacing: NPUIslandPresentation.utilizationHeaderSpacing) {
                         HStack(spacing: 16) {
                             Text("HBM · NPU:Chip").frame(maxWidth: .infinity, alignment: .leading)
@@ -268,6 +302,31 @@ struct NPUProcessPanel: View {
         case .disconnected: lang.t("npu.disconnected")
         case .connected: lang.t("npu.stale")
         }
+    }
+
+    private func networkRow(_ rate: NetworkInterfaceRate?, fresh: Bool) -> some View {
+        let download = NPUIslandPresentation.networkSpeed(fresh ? rate?.receivedPerSecond : nil)
+        let upload = NPUIslandPresentation.networkSpeed(fresh ? rate?.transmittedPerSecond : nil)
+        return HStack(spacing: 8) {
+            Text(lang.t("npu.network"))
+                .foregroundStyle(.white.opacity(0.65))
+            Text(rate?.name ?? "—")
+                .lineLimit(1).truncationMode(.middle)
+                .foregroundStyle(.white.opacity(0.45))
+            Spacer(minLength: 0)
+            Text("↓ \(download)")
+                .foregroundStyle(.cyan.opacity(fresh && rate?.receivedPerSecond != nil ? 0.9 : 0.4))
+                .fixedSize(horizontal: true, vertical: false)
+            Text("↑ \(upload)")
+                .foregroundStyle(.white.opacity(fresh && rate?.transmittedPerSecond != nil ? 0.65 : 0.4))
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+        .frame(height: NPUIslandPresentation.networkRowHeight)
+        .help(lang.t("npu.network.help"))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(lang.t("npu.network")) \(rate?.name ?? "—")")
+        .accessibilityValue("\(lang.t("npu.network.download")) \(download), \(lang.t("npu.network.upload")) \(upload)")
     }
 
     private func utilizationBar(_ title: String, device: NPUDevice, value: Double?, color: Color) -> some View {

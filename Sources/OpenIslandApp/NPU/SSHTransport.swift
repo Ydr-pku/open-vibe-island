@@ -154,6 +154,7 @@ final class AskPassBroker: @unchecked Sendable {
 /// Owns exactly one local ssh process. The only bytes ever sent as a remote
 /// shell command are the literal sampleCommand below.
 protocol NPUTransport: AnyObject {
+    var requiresNetworkSection: Bool { get }
     var onOutput: ((String) -> Void)? { get set }
     var onErrorOutput: ((String) -> Void)? { get set }
     /// Delivered only after stderr reaches EOF so the exit status and complete
@@ -165,10 +166,15 @@ protocol NPUTransport: AnyObject {
     func stop()
 }
 
+extension NPUTransport {
+    var requiresNetworkSection: Bool { false }
+}
+
 // Lifecycle and handler installation are serialized by MonitorStore's main actor;
 // Foundation's I/O callbacks use stateLock for the cancellation/credential state.
 final class SSHTransport: NPUTransport, @unchecked Sendable {
-    static let sampleCommand = "npu-smi info\n"
+    static let sampleCommand = "npu-smi info; printf '\\n__OPEN_ISLAND_NET_DEV_V1__\\n'; cat /proc/net/dev 2>/dev/null | head -c 32769 2>/dev/null || :; printf '\\n__OPEN_ISLAND_NET_ROUTE_V1__\\n'; cat /proc/net/route 2>/dev/null | head -c 32769 2>/dev/null || :; printf '\\n__OPEN_ISLAND_NET_ROUTE6_V1__\\n'; cat /proc/net/ipv6_route 2>/dev/null | head -c 32769 2>/dev/null || :; printf '\\n__OPEN_ISLAND_NET_END_V1__\\n'\n"
+    var requiresNetworkSection: Bool { true }
     static func isPasswordPrompt(_ prompt: String) -> Bool {
         let normalized = prompt.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized == "password:" || normalized.range(of: "^[^\\r\\n]+'s password:$", options: .regularExpression) != nil
