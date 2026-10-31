@@ -21,8 +21,8 @@ struct NPUIslandPresentationTests {
         #expect(NPUIslandPresentation.percentage(nil) == "—%")
         #expect(NPUIslandPresentation.percentage(0) == "0%")
         #expect(NPUIslandPresentation.percentage(99.8) == "100%")
-        #expect(NPUIslandPresentation.coreLabel(0) == "Core0%")
-        #expect(NPUIslandPresentation.coreLabel(nil) == "Core—%")
+        #expect(NPUIslandPresentation.coreLabel(0) == "AIC0%")
+        #expect(NPUIslandPresentation.coreLabel(nil) == "AIC—%")
     }
 
     @Test

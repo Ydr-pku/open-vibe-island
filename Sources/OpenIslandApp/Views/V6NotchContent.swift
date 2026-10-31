@@ -254,8 +254,9 @@ struct V6ClosedPill: View {
     /// width that fits just the glyph.
     var minWidth: CGFloat = 70
     var npuMonitor: MonitorStore? = nil
-
-    private var leftWidth: CGFloat { NPUIslandPresentation.compactWidth(for: npuMonitor) }
+    // A value passed from the observing parent keeps the text and background
+    // sized together when the monitor changes without changing its identity.
+    var leftWidth: CGFloat = NPUIslandPresentation.compactWidth(state: .disconnected)
 
     static func contentWidth(layout: V6ClosedLayout, height: CGFloat, physicalNotchWidth: CGFloat,
                              label: String?, rightSlot: IslandRightSlotContent?,
@@ -274,7 +275,7 @@ struct V6ClosedPill: View {
     @ViewBuilder
     private var leftContent: some View {
         if let npuMonitor {
-            NPUClosedStatusView(monitor: npuMonitor)
+            NPUClosedStatusView(monitor: npuMonitor, compactWidth: leftWidth)
         } else {
             Text("NPU")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))

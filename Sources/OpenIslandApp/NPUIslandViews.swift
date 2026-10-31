@@ -11,7 +11,7 @@ enum NPUIslandPresentation {
     }
 
     static func coreLabel(_ value: Double?) -> String {
-        "Core\(percentage(value))"
+        "AIC\(percentage(value))"
     }
 
     static func compactWidth(state: ConnectionState, isDemo: Bool = false,
@@ -52,6 +52,7 @@ enum NPUIslandPresentation {
 
 struct NPUClosedStatusView: View {
     @ObservedObject var monitor: MonitorStore
+    let compactWidth: CGFloat
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 2)) { context in
@@ -82,7 +83,7 @@ struct NPUClosedStatusView: View {
             .font(.system(size: 10, weight: .bold, design: .monospaced))
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-            .frame(width: NPUIslandPresentation.compactWidth(for: monitor), alignment: .leading)
+            .frame(width: compactWidth, alignment: .leading)
             .help(LanguageManager.shared.t("npu.compact.help"))
             .accessibilityLabel(LanguageManager.shared.t("npu.compact.help"))
         }
