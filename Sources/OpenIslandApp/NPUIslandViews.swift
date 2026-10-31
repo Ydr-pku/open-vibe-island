@@ -5,7 +5,10 @@ import SwiftUI
 enum NPUIslandPresentation {
     static let rowHeight: CGFloat = 24
     static let visibleRows = 6
-    static let utilizationRowHeight: CGFloat = 30
+    static let utilizationRowHeight: CGFloat = 22
+    static let visibleDeviceRows = 4
+    static let utilizationHeaderHeight: CGFloat = 14
+    static let utilizationHeaderSpacing: CGFloat = 4
     private static func textWidth(_ value: String) -> CGFloat {
         let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
         return ceil((value as NSString).size(withAttributes: [.font: font]).width)
@@ -43,7 +46,17 @@ enum NPUIslandPresentation {
     @MainActor
     static func contentHeight(for monitor: MonitorStore) -> CGFloat {
         guard monitor.state == .connected, let snapshot = monitor.snapshot else { return 84 }
-        return 68 + utilizationRowHeight + 8 + rowHeight * CGFloat(max(1, min(visibleRows, snapshot.processes.count)))
+        return 68 + utilizationSectionHeight(deviceCount: snapshot.devices.count) + 8
+            + rowHeight * CGFloat(max(1, min(visibleRows, snapshot.processes.count)))
+    }
+
+    static func utilizationSectionHeight(deviceCount: Int) -> CGFloat {
+        utilizationHeaderHeight + utilizationHeaderSpacing
+            + utilizationRowHeight * CGFloat(max(1, min(visibleDeviceRows, deviceCount)))
+    }
+
+    static func sortedDevices(_ devices: [NPUDevice]) -> [NPUDevice] {
+        devices.sorted { ($0.npuID, $0.chipID) < ($1.npuID, $1.chipID) }
     }
 
     static func percentage(_ value: Double?) -> String {
@@ -185,11 +198,32 @@ struct NPUProcessPanel: View {
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(fresh ? .white.opacity(0.38) : .orange)
 
-                    HStack(spacing: 16) {
-                        utilizationBar("HBM", value: fresh ? snapshot.hbmPercent : nil, color: .purple)
-                        utilizationBar("AIC", value: fresh ? snapshot.averageUtilization : nil, color: .cyan)
+                    VStack(spacing: NPUIslandPresentation.utilizationHeaderSpacing) {
+                        HStack(spacing: 16) {
+                            Text("HBM · NPU:Chip").frame(maxWidth: .infinity, alignment: .leading)
+                            Text("AIC · NPU:Chip").frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .frame(height: NPUIslandPresentation.utilizationHeaderHeight)
+
+                        ScrollView(.vertical) {
+                            LazyVStack(spacing: 0) {
+                                ForEach(NPUIslandPresentation.sortedDevices(snapshot.devices)) { device in
+                                    HStack(spacing: 16) {
+                                        utilizationBar("HBM", device: device,
+                                                       value: fresh ? device.hbmPercent : nil, color: .purple)
+                                        utilizationBar("AIC", device: device,
+                                                       value: fresh ? device.utilization : nil, color: .cyan)
+                                    }
+                                    .frame(height: NPUIslandPresentation.utilizationRowHeight)
+                                }
+                            }
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .scrollIndicators(snapshot.devices.count > NPUIslandPresentation.visibleDeviceRows ? .visible : .hidden)
                     }
-                    .frame(height: NPUIslandPresentation.utilizationRowHeight)
+                    .frame(height: NPUIslandPresentation.utilizationSectionHeight(deviceCount: snapshot.devices.count))
 
                     if snapshot.processes.isEmpty {
                         Text(lang.t("npu.processes.empty"))
@@ -236,16 +270,13 @@ struct NPUProcessPanel: View {
         }
     }
 
-    private func utilizationBar(_ title: String, value: Double?, color: Color) -> some View {
+    private func utilizationBar(_ title: String, device: NPUDevice, value: Double?, color: Color) -> some View {
         let fraction = NPUIslandPresentation.utilizationFraction(value)
-        return VStack(spacing: 5) {
-            HStack {
-                Text(title).foregroundStyle(.white.opacity(0.65))
-                Spacer(minLength: 0)
-                Text(NPUIslandPresentation.percentage(fraction == nil ? nil : value))
-                    .foregroundStyle(fraction == nil ? .white.opacity(0.4) : color.opacity(0.95))
-            }
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+        return HStack(spacing: 6) {
+            Text(device.id)
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .frame(width: 36, alignment: .leading)
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.1))
@@ -256,10 +287,14 @@ struct NPUProcessPanel: View {
                 }
             }
             .frame(height: 6)
+            Text(NPUIslandPresentation.percentage(fraction == nil ? nil : value))
+                .foregroundStyle(fraction == nil ? .white.opacity(0.4) : color.opacity(0.95))
+                .frame(width: 34, alignment: .trailing)
         }
+        .font(.system(size: 10, weight: .semibold, design: .monospaced))
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
+        .accessibilityLabel("NPU \(device.npuID), chip \(device.chipID), \(title)")
         .accessibilityValue(NPUIslandPresentation.percentage(fraction == nil ? nil : value))
     }
 

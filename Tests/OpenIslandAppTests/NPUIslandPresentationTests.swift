@@ -42,7 +42,26 @@ struct NPUIslandPresentationTests {
         #expect(NPUIslandPresentation.contentHeight(for: monitor) == 84)
         monitor.loadDemo()
         let rows = min(NPUIslandPresentation.visibleRows, monitor.snapshot?.processes.count ?? 0)
-        #expect(NPUIslandPresentation.contentHeight(for: monitor) == 68 + 30 + 8 + 24 * CGFloat(max(1, rows)))
+        #expect(NPUIslandPresentation.contentHeight(for: monitor) == 68 + 106 + 8 + 24 * CGFloat(max(1, rows)))
+        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 0) == 40)
+        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 1) == 40)
+        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 4) == 106)
+        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 8) == 106)
+    }
+
+    @Test
+    func deviceRowsUseStableNPUAndChipNumbers() {
+        let sample = MonitorStore.demoSnapshot(at: .now)
+        var first = sample.devices[0]
+        var second = sample.devices[1]
+        var third = sample.devices[2]
+        first.npuID = 5; first.chipID = 0; first.utilization = 80
+        second.npuID = 3; second.chipID = 1; second.utilization = nil
+        third.npuID = 3; third.chipID = 0; third.utilization = 0
+        let devices = NPUIslandPresentation.sortedDevices([first, second, third])
+        #expect(devices.map(\.id) == ["3:0", "3:1", "5:0"])
+        #expect(devices.map(\.utilization) == [0, nil, 80])
+        #expect(devices.map(\.hbmPercent) == [third.hbmPercent, second.hbmPercent, first.hbmPercent])
     }
 
     @Test
