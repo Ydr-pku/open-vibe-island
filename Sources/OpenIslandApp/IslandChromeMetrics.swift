@@ -3,7 +3,8 @@ import CoreGraphics
 enum IslandChromeMetrics {
     static let headerControlButtonSize: CGFloat = 22
     static let headerControlSpacing: CGFloat = 8
-    static let npuHeaderButtonWidth: CGFloat = 40
+    // Fits NPU, both 100% metrics, the demo marker, and capsule padding.
+    static let npuHeaderButtonWidth: CGFloat = 166
     static let notchHeaderHorizontalPadding: CGFloat = 46
     static let notchLaneSafetyInset: CGFloat = 12
     // Reserve space for the full compact Codex quota/reset chip, including

@@ -90,6 +90,46 @@ struct NPUClosedStatusView: View {
     }
 }
 
+struct NPUOpenedStatusView: View {
+    @ObservedObject var monitor: MonitorStore
+    var onConnect: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 2)) { context in
+            let fresh = NPUIslandPresentation.isFresh(
+                state: monitor.state, isPaused: monitor.isPaused,
+                lastUpdated: monitor.lastUpdated, refreshInterval: monitor.refreshInterval, at: context.date
+            )
+            Button(action: onConnect) {
+                HStack(spacing: 5) {
+                    Text(monitor.state == .connected ? "NPU" : "SSH")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.74))
+                    if monitor.state == .connected {
+                        if monitor.isDemo {
+                            Text("D").foregroundStyle(.orange)
+                        }
+                        Text("HBM\(NPUIslandPresentation.percentage(fresh ? monitor.snapshot?.hbmPercent : nil))")
+                            .foregroundStyle(fresh ? .purple.opacity(0.95) : .white.opacity(0.4))
+                        Text(NPUIslandPresentation.coreLabel(fresh ? monitor.snapshot?.averageUtilization : nil))
+                            .foregroundStyle(fresh ? .cyan.opacity(0.95) : .white.opacity(0.4))
+                    }
+                }
+                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.white.opacity(0.055), in: Capsule())
+                .overlay(Capsule().strokeBorder(.white.opacity(0.06), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help(LanguageManager.shared.t("npu.connection.title"))
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
 struct NPUProcessPanel: View {
     @ObservedObject var monitor: MonitorStore
     @ObservedObject var persistence: NPUConnectionPersistence

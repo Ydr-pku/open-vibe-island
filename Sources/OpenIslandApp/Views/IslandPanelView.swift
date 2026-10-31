@@ -369,17 +369,7 @@ struct IslandPanelView: View {
     }
 
     private var openedHeaderButtons: some View {
-        Button {
-            model.showNPUConnection()
-        } label: {
-            Text(npuMonitor.state == .connected ? "NPU" : "SSH")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(npuMonitor.state == .connected ? .cyan : .white.opacity(0.7))
-                .frame(width: IslandChromeMetrics.npuHeaderButtonWidth, height: Self.headerControlButtonSize)
-                .background(.white.opacity(0.08), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(lang.t("npu.connection.title"))
+        NPUOpenedStatusView(monitor: npuMonitor, onConnect: model.showNPUConnection)
     }
 
     private var openedContent: some View {
