@@ -5,7 +5,7 @@ import SwiftUI
 enum NPUIslandPresentation {
     static let rowHeight: CGFloat = 24
     static let visibleRows = 6
-    static let utilizationRowHeight: CGFloat = 22
+    static let utilizationRowHeight: CGFloat = 18
     static let visibleDeviceRows = 4
     static let utilizationHeaderHeight: CGFloat = 14
     static let utilizationHeaderSpacing: CGFloat = 4

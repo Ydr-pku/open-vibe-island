@@ -42,11 +42,11 @@ struct NPUIslandPresentationTests {
         #expect(NPUIslandPresentation.contentHeight(for: monitor) == 84)
         monitor.loadDemo()
         let rows = min(NPUIslandPresentation.visibleRows, monitor.snapshot?.processes.count ?? 0)
-        #expect(NPUIslandPresentation.contentHeight(for: monitor) == 68 + 106 + 8 + 24 * CGFloat(max(1, rows)))
-        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 0) == 40)
-        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 1) == 40)
-        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 4) == 106)
-        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 8) == 106)
+        #expect(NPUIslandPresentation.contentHeight(for: monitor) == 68 + 90 + 8 + 24 * CGFloat(max(1, rows)))
+        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 0) == 36)
+        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 1) == 36)
+        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 4) == 90)
+        #expect(NPUIslandPresentation.utilizationSectionHeight(deviceCount: 8) == 90)
     }
 
     @Test
