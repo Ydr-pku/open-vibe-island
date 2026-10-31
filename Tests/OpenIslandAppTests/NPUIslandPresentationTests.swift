@@ -26,6 +26,26 @@ struct NPUIslandPresentationTests {
     }
 
     @Test
+    func utilizationBarsClampAndKeepUnknownDistinctFromZero() {
+        #expect(NPUIslandPresentation.utilizationFraction(nil) == nil)
+        #expect(NPUIslandPresentation.utilizationFraction(.nan) == nil)
+        #expect(NPUIslandPresentation.utilizationFraction(-1) == 0)
+        #expect(NPUIslandPresentation.utilizationFraction(0) == 0)
+        #expect(NPUIslandPresentation.utilizationFraction(50) == 0.5)
+        #expect(NPUIslandPresentation.utilizationFraction(100) == 1)
+        #expect(NPUIslandPresentation.utilizationFraction(110) == 1)
+    }
+
+    @Test
+    func connectedPanelReservesSpaceForUtilizationBars() {
+        let monitor = MonitorStore(startsTimer: false)
+        #expect(NPUIslandPresentation.contentHeight(for: monitor) == 84)
+        monitor.loadDemo()
+        let rows = min(NPUIslandPresentation.visibleRows, monitor.snapshot?.processes.count ?? 0)
+        #expect(NPUIslandPresentation.contentHeight(for: monitor) == 68 + 30 + 8 + 24 * CGFloat(max(1, rows)))
+    }
+
+    @Test
     func expandedControlsRemainOutsideThePhysicalNotch() {
         let width = IslandChromeMetrics.minimumNotchedOpenedWidth(notchWidth: 224)
         let visibleLane = (width - 224) / 2 - IslandChromeMetrics.notchHeaderHorizontalPadding

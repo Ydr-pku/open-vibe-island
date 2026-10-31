@@ -674,6 +674,7 @@ struct IslandPanelView: View {
                 compactUsageSummaryView(providers, usesShortTitles: false)
                 compactUsageSummaryView(providers, usesShortTitles: true)
             }
+            .frame(width: providers.count == 1 ? IslandChromeMetrics.npuHeaderButtonWidth : nil, alignment: .trailing)
         } else {
             Color.clear
         }
@@ -765,6 +766,7 @@ struct IslandPanelView: View {
                 compactUsageSummaryView(providers, usesShortTitles: false)
                 compactUsageSummaryView(providers, usesShortTitles: true)
             }
+            .frame(width: providers.count == 1 ? IslandChromeMetrics.npuHeaderButtonWidth : nil, alignment: alignment)
             .frame(maxWidth: .infinity, alignment: alignment)
         }
     }
@@ -815,14 +817,14 @@ struct IslandPanelView: View {
     ) -> some View {
         HStack(spacing: 7) {
             ForEach(providers) { provider in
-                compactUsageChip(provider, usesShortTitle: usesShortTitles)
+                compactUsageChip(provider, usesShortTitle: usesShortTitles, matchesNPUWidth: providers.count == 1)
             }
         }
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private func compactUsageChip(_ provider: UsageProviderPresentation, usesShortTitle: Bool) -> some View {
+    private func compactUsageChip(_ provider: UsageProviderPresentation, usesShortTitle: Bool, matchesNPUWidth: Bool) -> some View {
         HStack(spacing: 5) {
             Text(usesShortTitle ? provider.shortTitle : provider.title)
                 .font(.system(size: 11, weight: .semibold))
@@ -841,7 +843,8 @@ struct IslandPanelView: View {
                 .foregroundStyle(.white.opacity(0.68))
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .frame(minWidth: matchesNPUWidth ? IslandChromeMetrics.npuHeaderButtonWidth : 0,
+               minHeight: IslandChromeMetrics.openedHeaderChipHeight)
         .background(.white.opacity(0.055), in: Capsule())
         .overlay(
             Capsule()

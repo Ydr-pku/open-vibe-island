@@ -5,6 +5,7 @@ import SwiftUI
 enum NPUIslandPresentation {
     static let rowHeight: CGFloat = 24
     static let visibleRows = 6
+    static let utilizationRowHeight: CGFloat = 30
     private static func textWidth(_ value: String) -> CGFloat {
         let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
         return ceil((value as NSString).size(withAttributes: [.font: font]).width)
@@ -42,11 +43,16 @@ enum NPUIslandPresentation {
     @MainActor
     static func contentHeight(for monitor: MonitorStore) -> CGFloat {
         guard monitor.state == .connected, let snapshot = monitor.snapshot else { return 84 }
-        return 68 + rowHeight * CGFloat(max(1, min(visibleRows, snapshot.processes.count)))
+        return 68 + utilizationRowHeight + 8 + rowHeight * CGFloat(max(1, min(visibleRows, snapshot.processes.count)))
     }
 
     static func percentage(_ value: Double?) -> String {
         value.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—%"
+    }
+
+    static func utilizationFraction(_ value: Double?) -> CGFloat? {
+        guard let value, value.isFinite else { return nil }
+        return CGFloat(min(100, max(0, value)) / 100)
     }
 }
 
@@ -118,8 +124,8 @@ struct NPUOpenedStatusView: View {
                 .font(.system(size: 11.5, weight: .bold, design: .monospaced))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .frame(width: IslandChromeMetrics.npuHeaderButtonWidth,
+                       height: IslandChromeMetrics.openedHeaderChipHeight)
                 .background(.white.opacity(0.055), in: Capsule())
                 .overlay(Capsule().strokeBorder(.white.opacity(0.06), lineWidth: 1))
             }
@@ -179,6 +185,12 @@ struct NPUProcessPanel: View {
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(fresh ? .white.opacity(0.38) : .orange)
 
+                    HStack(spacing: 16) {
+                        utilizationBar("HBM", value: fresh ? snapshot.hbmPercent : nil, color: .purple)
+                        utilizationBar("AIC", value: fresh ? snapshot.averageUtilization : nil, color: .cyan)
+                    }
+                    .frame(height: NPUIslandPresentation.utilizationRowHeight)
+
                     if snapshot.processes.isEmpty {
                         Text(lang.t("npu.processes.empty"))
                             .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
@@ -222,6 +234,33 @@ struct NPUProcessPanel: View {
         case .disconnected: lang.t("npu.disconnected")
         case .connected: lang.t("npu.stale")
         }
+    }
+
+    private func utilizationBar(_ title: String, value: Double?, color: Color) -> some View {
+        let fraction = NPUIslandPresentation.utilizationFraction(value)
+        return VStack(spacing: 5) {
+            HStack {
+                Text(title).foregroundStyle(.white.opacity(0.65))
+                Spacer(minLength: 0)
+                Text(NPUIslandPresentation.percentage(fraction == nil ? nil : value))
+                    .foregroundStyle(fraction == nil ? .white.opacity(0.4) : color.opacity(0.95))
+            }
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.1))
+                    if let fraction, fraction > 0 {
+                        Capsule().fill(color.opacity(0.9))
+                            .frame(width: geometry.size.width * fraction)
+                    }
+                }
+            }
+            .frame(height: 6)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(NPUIslandPresentation.percentage(fraction == nil ? nil : value))
     }
 
     private func processRow(_ process: NPUProcess) -> some View {
