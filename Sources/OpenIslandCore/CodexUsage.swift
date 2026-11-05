@@ -404,19 +404,21 @@ public enum CodexLocalUsageLoader {
     private static let streamingChunkSize = 256 * 1_024
     public static let defaultRootURLs = CodexUsageLoader.defaultRootURLs
 
+    private struct ExactUsage {
+        var range: CodexUsageTokenRange
+        var timestamp: Date
+        var priority: Int
+    }
+
     public static func load(
         now: Date = .now,
         calendar: Calendar = .current,
         fileManager: FileManager = .default,
-        desktopThreadUsages: [CodexDesktopThreadUsage] = []
+        desktopThreadUsages: [CodexDesktopThreadUsage] = [],
+        remoteArchives: [CodexRemoteUsageArchive] = []
     ) -> CodexLocalUsageSnapshot {
-        load(
-            fromRootURLs: defaultRootURLs,
-            now: now,
-            calendar: calendar,
-            fileManager: fileManager,
-            desktopThreadUsages: desktopThreadUsages
-        )
+        load(fromRootURLs: defaultRootURLs, now: now, calendar: calendar, fileManager: fileManager,
+             desktopThreadUsages: desktopThreadUsages, remoteArchives: remoteArchives)
     }
 
     public static func load(
@@ -424,15 +426,11 @@ public enum CodexLocalUsageLoader {
         now: Date = .now,
         calendar: Calendar = .current,
         fileManager: FileManager = .default,
-        desktopThreadUsages: [CodexDesktopThreadUsage] = []
+        desktopThreadUsages: [CodexDesktopThreadUsage] = [],
+        remoteArchives: [CodexRemoteUsageArchive] = []
     ) -> CodexLocalUsageSnapshot {
-        load(
-            fromRootURLs: [rootURL],
-            now: now,
-            calendar: calendar,
-            fileManager: fileManager,
-            desktopThreadUsages: desktopThreadUsages
-        )
+        load(fromRootURLs: [rootURL], now: now, calendar: calendar, fileManager: fileManager,
+             desktopThreadUsages: desktopThreadUsages, remoteArchives: remoteArchives)
     }
 
     public static func load(
@@ -440,246 +438,208 @@ public enum CodexLocalUsageLoader {
         now: Date = .now,
         calendar: Calendar = .current,
         fileManager: FileManager = .default,
-        desktopThreadUsages: [CodexDesktopThreadUsage] = []
+        desktopThreadUsages: [CodexDesktopThreadUsage] = [],
+        remoteArchives: [CodexRemoteUsageArchive] = []
     ) -> CodexLocalUsageSnapshot {
         let today = calendar.startOfDay(for: now)
         let firstDay = calendar.date(byAdding: .day, value: -29, to: today) ?? today
         let candidateCutoff = firstDay.addingTimeInterval(-86_400)
         var daily: [String: Int64] = [:]
         var hourly: [String: Int64] = [:]
-        var rolloutTokensByThread: [String: Int64] = [:]
+        var exactByThread: [String: [ExactUsage]] = [:]
+        var remoteTotals: [String: Int64] = [:]
         var unattributedRemoteTokens: Int64 = 0
         var unattributedRemoteHourlyTokens: Int64 = 0
 
-        for rootURL in rootURLs {
-            guard fileManager.fileExists(atPath: rootURL.path),
-                  let enumerator = fileManager.enumerator(
-                    at: rootURL,
-                    includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-                    options: [.skipsHiddenFiles]
-                  ) else {
-                continue
-            }
-
-            for case let fileURL as URL in enumerator {
-                guard fileURL.lastPathComponent.hasPrefix("rollout-"),
-                      fileURL.pathExtension == "jsonl",
-                      let values = try? fileURL.resourceValues(
-                        forKeys: [.contentModificationDateKey, .isRegularFileKey]
-                      ),
-                      values.isRegularFile == true,
-                      (values.contentModificationDate ?? .distantPast) >= candidateCutoff else {
-                    continue
+        // Keep the cumulative coordinates even for old records. Subtracting only
+        // the displayed 30-day sum from a lifetime IPC counter creates duplicates.
+        for archive in remoteArchives.sorted(by: { $0.capturedAt > $1.capturedAt }) {
+            guard (try? archive.validate(now: now)) != nil else { continue }
+            for thread in archive.threads {
+                let id = thread.threadID.lowercased()
+                let records = thread.records.sorted(by: CodexRemoteUsageArchive.recordOrder)
+                exactByThread[id, default: []] += exactRecords(records, priority: 0, now: now)
+                if records.last.map({ $0.timestamp >= firstDay && $0.timestamp <= now }) == true {
+                    remoteTotals[id] = max(remoteTotals[id, default: 0], thread.totalTokens)
                 }
-
-                accumulate(
-                    fileURL: fileURL,
-                    threadID: threadID(from: fileURL),
-                    firstDay: firstDay,
-                    today: today,
-                    now: now,
-                    calendar: calendar,
-                    daily: &daily,
-                    hourly: &hourly,
-                    rolloutTokensByThread: &rolloutTokensByThread
-                )
             }
         }
 
-        // A handed-off thread can exist in both hosts' IPC caches, and its
-        // rollout may remain local. These are cumulative counters for the same
-        // logical thread, so take the largest total once before subtracting
-        // rollout tokens. Host routing stays separate in the persistent cache.
-        var desktopUsagesByThread: [String: CodexDesktopThreadUsage] = [:]
+        for rootURL in rootURLs {
+            guard let enumerator = fileManager.enumerator(
+                at: rootURL, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            for case let fileURL as URL in enumerator {
+                guard fileURL.lastPathComponent.hasPrefix("rollout-"), fileURL.pathExtension == "jsonl",
+                      let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                      values.isRegularFile == true,
+                      (values.contentModificationDate ?? .distantPast) >= candidateCutoff else { continue }
+                let id = threadID(from: fileURL) ?? fileURL.standardizedFileURL.path
+                exactByThread[id, default: []] += exactRecords(localRecords(fileURL: fileURL), priority: 1, now: now)
+            }
+        }
+
+        // A handoff can expose the same logical thread through several hosts.
+        var desktopByThread: [String: CodexDesktopThreadUsage] = [:]
         for usage in desktopThreadUsages {
             let activityDate = usage.observedAt ?? usage.updatedAt
             guard usage.totalTokens > 0, activityDate >= firstDay, activityDate <= now,
                   usage.updatedAt <= now, usage.startedAt <= usage.updatedAt,
                   usage.hostID != "local" || usage.startedAt >= firstDay else { continue }
-            let existing = desktopUsagesByThread[usage.threadID]
-            if existing == nil || usage.totalTokens > existing!.totalTokens
-                || (usage.totalTokens == existing!.totalTokens && usage.intervals != nil && existing!.intervals == nil)
-                || (usage.totalTokens == existing!.totalTokens && (usage.intervals != nil) == (existing!.intervals != nil)
-                    && usage.updatedAt > existing!.updatedAt) {
-                desktopUsagesByThread[usage.threadID] = usage
+            let id = usage.threadID.lowercased()
+            let old = desktopByThread[id]
+            if old == nil || usage.totalTokens > old!.totalTokens
+                || (usage.totalTokens == old!.totalTokens && usage.intervals != nil && old!.intervals == nil)
+                || (usage.totalTokens == old!.totalTokens && (usage.intervals != nil) == (old!.intervals != nil)
+                    && usage.updatedAt > old!.updatedAt) {
+                desktopByThread[id] = usage
             }
         }
-        for usage in desktopUsagesByThread.values {
-            guard (usage.observedAt ?? usage.updatedAt) >= firstDay,
-                  usage.updatedAt <= now else {
-                continue
-            }
-            let alreadyCounted = rolloutTokensByThread[usage.threadID, default: 0]
-            let missingTokens = max(0, usage.totalTokens - alreadyCounted)
-            guard missingTokens > 0 else { continue }
 
-            if usage.hostID != "local" {
-                let intervals = usage.intervals ?? [CodexDesktopUsageInterval(
+        for id in Set(exactByThread.keys).union(desktopByThread.keys).union(remoteTotals.keys) {
+            var covered = CodexUsageTokenCoverage()
+            let exact = (exactByThread[id] ?? []).sorted {
+                if $0.priority != $1.priority { return $0.priority < $1.priority }
+                if $0.range.lower != $1.range.lower { return $0.range.lower < $1.range.lower }
+                return $0.timestamp < $1.timestamp
+            }
+            for entry in exact {
+                let tokens = covered.uncovered(entry.range).reduce(Int64(0)) { $0 + $1.count }
+                covered.insert(entry.range)
+                guard tokens > 0, entry.timestamp >= firstDay else { continue }
+                add(tokens, at: entry.timestamp, today: today, calendar: calendar, daily: &daily, hourly: &hourly)
+            }
+
+            if let usage = desktopByThread[id] {
+                let intervals = usage.hostID == "local" ? [CodexDesktopUsageInterval(
                     startedAt: usage.startedAt, endedAt: usage.updatedAt, tokens: usage.totalTokens
-                )]
-                var rolloutRemainder = alreadyCounted
+                )] : (usage.intervals ?? [CodexDesktopUsageInterval(
+                    startedAt: usage.startedAt, endedAt: usage.updatedAt, tokens: usage.totalTokens
+                )])
+                var cursor: Int64 = 0
                 for interval in intervals.sorted(by: { $0.endedAt < $1.endedAt }) {
-                    let covered = min(rolloutRemainder, max(0, interval.tokens))
-                    rolloutRemainder -= covered
-                    let tokens = max(0, interval.tokens - covered)
-                    guard tokens > 0, interval.endedAt >= firstDay, interval.endedAt <= now else { continue }
-                    guard interval.startedAt <= interval.endedAt,
-                          calendar.isDate(interval.startedAt, inSameDayAs: interval.endedAt) else {
-                        unattributedRemoteTokens += tokens
-                        continue
-                    }
-                    daily[dayKey(for: interval.endedAt, calendar: calendar), default: 0] += tokens
-                    if interval.endedAt >= today {
-                        if calendar.isDate(interval.startedAt, equalTo: interval.endedAt, toGranularity: .hour) {
-                            let hour = calendar.component(.hour, from: interval.endedAt)
-                            hourly[String(format: "%02d", hour), default: 0] += tokens
-                        } else {
-                            unattributedRemoteHourlyTokens += tokens
+                    let count = min(max(0, interval.tokens), usage.totalTokens - cursor)
+                    let range = CodexUsageTokenRange(lower: cursor, upper: cursor + count)
+                    cursor += count
+                    let tokens = covered.uncovered(range).reduce(Int64(0)) { $0 + $1.count }
+                    guard tokens > 0, interval.endedAt <= now else { continue }
+                    covered.insert(range)
+                    // A retained counter can include known usage before this
+                    // chart window. It is covered, even though it is not drawn.
+                    guard interval.endedAt >= firstDay else { continue }
+                    if usage.hostID == "local" || (interval.startedAt <= interval.endedAt
+                        && calendar.isDate(interval.startedAt, inSameDayAs: interval.endedAt)) {
+                        daily[dayKey(for: interval.endedAt, calendar: calendar), default: 0] += tokens
+                        if interval.endedAt >= today {
+                            if usage.hostID == "local" || calendar.isDate(interval.startedAt, equalTo: interval.endedAt, toGranularity: .hour) {
+                                let hour = calendar.component(.hour, from: interval.endedAt)
+                                hourly[String(format: "%02d", hour), default: 0] += tokens
+                            } else { unattributedRemoteHourlyTokens += tokens }
                         }
-                    }
+                    } else { unattributedRemoteTokens += tokens }
                 }
-                continue
+                if usage.hostID != "local" {
+                    remoteTotals[id] = max(remoteTotals[id, default: 0], usage.totalTokens)
+                }
             }
-            guard usage.startedAt >= firstDay else { continue }
-
-            daily[dayKey(for: usage.updatedAt, calendar: calendar), default: 0] += missingTokens
-            if usage.updatedAt >= today {
-                let hour = calendar.component(.hour, from: usage.updatedAt)
-                hourly[String(format: "%02d", hour), default: 0] += missingTokens
+            // Missing first records remain explicit unknowns, including when a
+            // host's archive is available before Desktop has loaded that thread.
+            if let total = remoteTotals[id] {
+                unattributedRemoteTokens += covered.uncovered(.init(lower: 0, upper: total))
+                    .reduce(Int64(0)) { $0 + $1.count }
             }
         }
 
         return CodexLocalUsageSnapshot(
-            dailyBuckets: daily
-                .map { CodexUsageHistoryBucket(key: $0.key, tokens: $0.value) }
-                .sorted { $0.key < $1.key },
-            hourlyBuckets: hourly
-                .map { CodexUsageHistoryBucket(key: $0.key, tokens: $0.value) }
-                .sorted { $0.key < $1.key },
+            dailyBuckets: daily.map { .init(key: $0.key, tokens: $0.value) }.sorted { $0.key < $1.key },
+            hourlyBuckets: hourly.map { .init(key: $0.key, tokens: $0.value) }.sorted { $0.key < $1.key },
             capturedAt: now,
             unattributedRemoteTokens: unattributedRemoteTokens > 0 ? unattributedRemoteTokens : nil,
             unattributedRemoteHourlyTokens: unattributedRemoteHourlyTokens > 0 ? unattributedRemoteHourlyTokens : nil
         )
     }
 
-    private static func accumulate(
-        fileURL: URL,
-        threadID: String?,
-        firstDay: Date,
-        today: Date,
-        now: Date,
-        calendar: Calendar,
-        daily: inout [String: Int64],
-        hourly: inout [String: Int64],
-        rolloutTokensByThread: inout [String: Int64]
-    ) {
-        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
-            return
+    private static func exactRecords(_ records: [CodexRemoteUsageRecord], priority: Int, now: Date) -> [ExactUsage] {
+        var previous: Int64?
+        var result: [ExactUsage] = []
+        for record in records {
+            guard record.timestamp <= now, record.totalTokens >= (previous ?? 0) else { continue }
+            let old = previous
+            previous = record.totalTokens
+            guard old != record.totalTokens else { continue }
+            let lower: Int64
+            if let last = record.lastTokens, last >= 0, last <= record.totalTokens {
+                // A missing prefix or skipped event has no recoverable timestamp.
+                lower = max(old ?? 0, record.totalTokens - last)
+            } else if let old {
+                lower = old
+            } else { continue }
+            let range = CodexUsageTokenRange(lower: lower, upper: record.totalTokens)
+            if range.count > 0 { result.append(.init(range: range, timestamp: record.timestamp, priority: priority)) }
         }
-        defer { try? handle.close() }
-
-        var buffer = Data()
-        while let chunk = try? handle.read(upToCount: streamingChunkSize),
-              !chunk.isEmpty {
-            buffer.append(chunk)
-            for line in extractCompleteLines(from: &buffer) {
-                accumulate(
-                    line: line,
-                    threadID: threadID,
-                    firstDay: firstDay,
-                    today: today,
-                    now: now,
-                    calendar: calendar,
-                    daily: &daily,
-                    hourly: &hourly,
-                    rolloutTokensByThread: &rolloutTokensByThread
-                )
-            }
-        }
-        if !buffer.isEmpty {
-            accumulate(
-                line: String(decoding: buffer, as: UTF8.self),
-                threadID: threadID,
-                firstDay: firstDay,
-                today: today,
-                now: now,
-                calendar: calendar,
-                daily: &daily,
-                hourly: &hourly,
-                rolloutTokensByThread: &rolloutTokensByThread
-            )
-        }
+        return result
     }
 
-    private static func accumulate(
-        line: String,
-        threadID: String?,
-        firstDay: Date,
-        today: Date,
-        now: Date,
-        calendar: Calendar,
-        daily: inout [String: Int64],
-        hourly: inout [String: Int64],
-        rolloutTokensByThread: inout [String: Int64]
-    ) {
-        guard let data = line.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["type"] as? String == "event_msg",
-              let payload = object["payload"] as? [String: Any],
-              payload["type"] as? String == "token_count",
-              let info = payload["info"] as? [String: Any],
-              let lastUsage = info["last_token_usage"] as? [String: Any],
-              let tokenNumber = lastUsage["total_tokens"] as? NSNumber,
-              tokenNumber.int64Value > 0,
-              let timestampText = object["timestamp"] as? String,
-              let timestamp = isoDate(timestampText),
-              timestamp >= firstDay,
-              timestamp <= now else {
-            return
+    private static func localRecords(fileURL: URL) -> [CodexRemoteUsageRecord] {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return [] }
+        defer { try? handle.close() }
+        var records: [CodexRemoteUsageRecord] = []
+        var counter: Int64 = 0
+        func append(_ line: String) {
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["type"] as? String == "event_msg",
+                  let payload = object["payload"] as? [String: Any], payload["type"] as? String == "token_count",
+                  let info = payload["info"] as? [String: Any],
+                  let text = object["timestamp"] as? String, let timestamp = isoDate(text) else { return }
+            let last = (info["last_token_usage"] as? [String: Any])?["total_tokens"] as? NSNumber
+            let cumulative = (info["total_token_usage"] as? [String: Any])?["total_tokens"] as? NSNumber
+            let total: Int64
+            if let cumulative { total = cumulative.int64Value }
+            else if let last, last.int64Value > 0, last.int64Value <= Int64.max - counter {
+                total = counter + last.int64Value
+            } else { return }
+            guard total >= counter, total >= 0 else { return }
+            counter = total
+            records.append(.init(timestamp: timestamp, totalTokens: total, lastTokens: last?.int64Value))
         }
-
-        let dayKey = dayKey(for: timestamp, calendar: calendar)
-        daily[dayKey, default: 0] += tokenNumber.int64Value
-        if let threadID {
-            rolloutTokensByThread[threadID, default: 0] += tokenNumber.int64Value
+        var buffer = Data()
+        while let chunk = try? handle.read(upToCount: streamingChunkSize), !chunk.isEmpty {
+            buffer.append(chunk)
+            for line in extractCompleteLines(from: &buffer) { append(line) }
         }
+        if !buffer.isEmpty { append(String(decoding: buffer, as: UTF8.self)) }
+        return records
+    }
 
+    private static func add(_ tokens: Int64, at timestamp: Date, today: Date, calendar: Calendar,
+                            daily: inout [String: Int64], hourly: inout [String: Int64]) {
+        daily[dayKey(for: timestamp, calendar: calendar), default: 0] += tokens
         if timestamp >= today {
-            let hour = calendar.component(.hour, from: timestamp)
-            let hourKey = String(format: "%02d", hour)
-            hourly[hourKey, default: 0] += tokenNumber.int64Value
+            hourly[String(format: "%02d", calendar.component(.hour, from: timestamp)), default: 0] += tokens
         }
     }
 
     private static func extractCompleteLines(from buffer: inout Data) -> [String] {
         var lines: [String] = []
-        while let newlineIndex = buffer.firstIndex(of: UInt8(ascii: "\n")) {
-            let lineData = buffer[..<newlineIndex]
-            buffer.removeSubrange(...newlineIndex)
-            if !lineData.isEmpty {
-                lines.append(String(decoding: lineData, as: UTF8.self))
-            }
+        while let index = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+            let line = buffer[..<index]
+            buffer.removeSubrange(...index)
+            if !line.isEmpty { lines.append(String(decoding: line, as: UTF8.self)) }
         }
         return lines
     }
 
     private static func isoDate(_ value: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: value) {
-            return date
-        }
-        return ISO8601DateFormatter().date(from: value)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 
     private static func dayKey(for date: Date, calendar: Calendar) -> String {
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
-        return String(
-            format: "%04d-%02d-%02d",
-            components.year ?? 0,
-            components.month ?? 0,
-            components.day ?? 0
-        )
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 
     private static func threadID(from fileURL: URL) -> String? {
