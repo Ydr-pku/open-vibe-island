@@ -4,9 +4,11 @@ set -euo pipefail
 
 
 skip_setup=false
+skip_icons=false
 for arg in "$@"; do
   case "$arg" in
     --skip-setup) skip_setup=true ;;
+    --skip-icons) skip_icons=true ;;
   esac
 done
 
@@ -28,7 +30,9 @@ app_binary="$build_root/OpenIslandApp"
 hooks_binary="$build_root/OpenIslandHooks"
 setup_binary="$build_root/OpenIslandSetup"
 
-python3 "$brand_script"
+if [ "$skip_icons" = false ] || [ ! -f "$brand_icon" ]; then
+  python3 "$brand_script"
+fi
 if [ "$skip_setup" = false ]; then
   "$setup_binary" install --hooks-binary "$hooks_binary"
 fi
