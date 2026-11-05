@@ -214,6 +214,7 @@ struct CodexRemoteUsageSyncTests {
         #expect(command.contains("'/home/user/it'\\''s $(literal)'"))
         #expect(CodexRemoteUsageSync.arguments(for: source).contains("StrictHostKeyChecking=yes"))
         #expect(CodexRemoteUsageSync.arguments(for: source).contains("BatchMode=yes"))
+        #expect(CodexRemoteUsageSync.arguments(for: source).contains("-C"))
     }
 
     @Test

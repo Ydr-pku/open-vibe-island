@@ -145,7 +145,7 @@ actor CodexRemoteUsageSync {
     nonisolated static func arguments(for source: CodexRemoteUsageSource) -> [String] {
         var command = "python3 - --host-id \(shellQuote(source.hostID))"
         if let home = source.codexHome, !home.isEmpty { command += " --codex-home \(shellQuote(home))" }
-        return ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=yes",
+        return ["-T", "-C", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=yes",
                 "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2", "--", source.sshAlias, command]
     }
 
