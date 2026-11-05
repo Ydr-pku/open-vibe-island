@@ -107,6 +107,31 @@ struct CodexRemoteUsageArchiveTests {
         #expect(result.unattributedRemoteTokens == nil)
     }
 
+    @Test(arguments: [true, false])
+    func splitRolloutCopiesUseCanonicalThreadIdentity(hasMetadata: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let copyID = "01a17bf8-d21a-7ce0-b666-d0da803c9ed4"
+        // A header overrides the entire filename. Without a header, the first
+        // UUID remains authoritative when a split-copy UUID has been appended.
+        let filenameID = hasMetadata ? copyID : id
+        let file = root.appendingPathComponent("rollout-2026-10-03-\(filenameID)_\(copyID).jsonl")
+        let header = hasMetadata ? "{\"type\":\"session_meta\",\"payload\":{\"id\":\"\(id)\"}}\n" : ""
+        let event = """
+        {"type":"event_msg","timestamp":"2026-10-03T10:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":100},"last_token_usage":{"total_tokens":100}}}}
+        """
+        try Data((header + event).utf8).write(to: file)
+        try FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: file.path)
+        let source = archive([record(100, 100, "2026-10-03T10:00:00Z")])
+        let ipc = CodexDesktopThreadUsage(threadID: id, totalTokens: 100,
+            updatedAt: date("2026-10-03T10:00:00Z"), startedAt: date("2026-10-03T09:00:00Z"), hostID: source.hostID)
+        let result = snapshot([source], ipc: [ipc], roots: [root])
+        #expect(result.dailyBuckets == [.init(key: "2026-10-03", tokens: 100)])
+        #expect(result.hourlyBuckets == [.init(key: "10", tokens: 100)])
+        #expect(result.unattributedRemoteTokens == nil)
+    }
+
     @Test func cacheMergeIsIdempotentAndInvalidImportKeepsPreviousData() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("usage.json")

@@ -475,8 +475,9 @@ public enum CodexLocalUsageLoader {
                       let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                       values.isRegularFile == true,
                       (values.contentModificationDate ?? .distantPast) >= candidateCutoff else { continue }
-                let id = threadID(from: fileURL) ?? fileURL.standardizedFileURL.path
-                exactByThread[id, default: []] += exactRecords(localRecords(fileURL: fileURL), priority: 1, now: now)
+                let rollout = localRecords(fileURL: fileURL)
+                let id = rollout.threadID ?? threadID(from: fileURL) ?? fileURL.standardizedFileURL.path
+                exactByThread[id, default: []] += exactRecords(rollout.records, priority: 1, now: now)
             }
         }
 
@@ -581,16 +582,23 @@ public enum CodexLocalUsageLoader {
         return result
     }
 
-    private static func localRecords(fileURL: URL) -> [CodexRemoteUsageRecord] {
-        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return [] }
+    private static func localRecords(fileURL: URL) -> (threadID: String?, records: [CodexRemoteUsageRecord]) {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return (nil, []) }
         defer { try? handle.close() }
+        var canonicalThreadID: String?
         var records: [CodexRemoteUsageRecord] = []
         var counter: Int64 = 0
         func append(_ line: String) {
             guard let data = line.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["type"] as? String == "event_msg",
-                  let payload = object["payload"] as? [String: Any], payload["type"] as? String == "token_count",
+                  let payload = object["payload"] as? [String: Any] else { return }
+            if object["type"] as? String == "session_meta" {
+                if canonicalThreadID == nil, let id = payload["id"] as? String, UUID(uuidString: id) != nil {
+                    canonicalThreadID = id.lowercased()
+                }
+                return
+            }
+            guard object["type"] as? String == "event_msg", payload["type"] as? String == "token_count",
                   let info = payload["info"] as? [String: Any],
                   let text = object["timestamp"] as? String, let timestamp = isoDate(text) else { return }
             let last = (info["last_token_usage"] as? [String: Any])?["total_tokens"] as? NSNumber
@@ -610,7 +618,7 @@ public enum CodexLocalUsageLoader {
             for line in extractCompleteLines(from: &buffer) { append(line) }
         }
         if !buffer.isEmpty { append(String(decoding: buffer, as: UTF8.self)) }
-        return records
+        return (canonicalThreadID, records)
     }
 
     private static func add(_ tokens: Int64, at timestamp: Date, today: Date, calendar: Calendar,
@@ -644,8 +652,13 @@ public enum CodexLocalUsageLoader {
 
     private static func threadID(from fileURL: URL) -> String? {
         let basename = fileURL.deletingPathExtension().lastPathComponent
-        guard basename.count >= 36 else { return nil }
-        let candidate = String(basename.suffix(36))
+        // Split copies may append another UUID; the first one identifies the
+        // logical thread when the authoritative session_meta header is absent.
+        guard let range = basename.range(
+            of: "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            options: .regularExpression
+        ) else { return nil }
+        let candidate = String(basename[range])
         return UUID(uuidString: candidate) == nil ? nil : candidate.lowercased()
     }
 }
