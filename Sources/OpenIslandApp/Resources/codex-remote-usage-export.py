@@ -121,10 +121,14 @@ def export_archive(root, host_id, now=None):
                         raise ValueError("A completed remote log line is invalid")
                     payload = item.get("payload")
                     if item.get("type") == "session_meta":
-                        value = str(uuid.UUID(payload["id"]))
-                        if declared_id is not None and declared_id != value:
-                            raise ValueError("A log contains conflicting session identities")
-                        declared_id = value
+                        # Forked sessions can retain parent session_meta records
+                        # as context. The first valid header owns this log;
+                        # subsequent inherited headers do not change its owner.
+                        if declared_id is None and isinstance(payload, dict):
+                            try:
+                                declared_id = str(uuid.UUID(payload.get("id", "")))
+                            except (ValueError, AttributeError, TypeError):
+                                pass
                         continue
                     if item.get("type") != "event_msg" or not isinstance(payload, dict) or payload.get("type") != "token_count":
                         continue

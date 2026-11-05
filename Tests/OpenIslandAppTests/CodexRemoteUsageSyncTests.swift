@@ -66,6 +66,32 @@ struct CodexRemoteUsageSyncTests {
         #expect((threads[0]["records"] as? [[String: Any]])?.count == 2)
     }
 
+    @Test
+    func inheritedParentMetadataDoesNotMergeIndependentForkCounters() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let parent = "01a15ec8-95c8-71e1-be24-297427a9a825"
+        let children = ["01a15ecb-95c8-71e1-be24-297427a9a825", "01a15ecc-95c8-71e1-be24-297427a9a825"]
+        for (index, child) in children.enumerated() {
+            let total = 40_000 + index
+            let contents = """
+            {"type":"session_meta","payload":{"id":"\(child)"}}
+            {"type":"response_item","payload":{"body":"inherited context"}}
+            {"type":"session_meta","payload":{"id":"\(parent)"}}
+            {"type":"event_msg","timestamp":"2026-11-02T00:02:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":\(total)},"last_token_usage":{"total_tokens":\(total)}}}}
+            """ + "\n"
+            try Data(contents.utf8).write(to: directory.appendingPathComponent("rollout-\(child).jsonl"))
+        }
+        let value = try #require(JSONSerialization.jsonObject(with: try await runExporter(root: root)) as? [String: Any])
+        let threads = try #require(value["threads"] as? [[String: Any]])
+        #expect(threads.count == 2)
+        #expect(Set(threads.compactMap { $0["threadID"] as? String }) == Set(children))
+        #expect(threads.compactMap { $0["totalTokens"] as? Int }.reduce(0, +) == 80_001)
+        #expect(!threads.contains { $0["threadID"] as? String == parent })
+    }
+
     @Test(.enabled(if: zstdToolURL != nil))
     func compressedOriginalAndSplitLogMergeWithoutLosingHistoricalTimestamps() async throws {
         let root = try temporaryDirectory()
