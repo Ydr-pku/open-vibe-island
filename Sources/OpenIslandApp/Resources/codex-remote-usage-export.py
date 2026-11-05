@@ -171,6 +171,21 @@ def export_archive(root, host_id, now=None):
                     duplicates += 1
                 if existing is None or record["timestamp"] < existing["timestamp"]:
                     thread[total] = record
+    exported_threads = []
+    ambiguous_threads = 0
+    for thread_id, records in sorted(threads.items()):
+        if not records:
+            continue
+        ordered = sorted(records.values(), key=lambda record: (record["timestamp"], record["totalTokens"]))
+        total = max(records)
+        if any(after["totalTokens"] < before["totalTokens"] for before, after in zip(ordered, ordered[1:])):
+            # Independent copies may reuse counter ranges with incompatible
+            # timestamps. Retain only their known cumulative maximum; a zero
+            # per-event tail deliberately leaves its date distribution unknown.
+            ambiguous_threads += 1
+            ordered = [{"timestamp": max(record["timestamp"] for record in ordered),
+                        "totalTokens": total, "lastTokens": 0}]
+        exported_threads.append({"threadID": thread_id, "totalTokens": total, "records": ordered})
     return {
         "version": 1,
         "complete": True,
@@ -182,11 +197,10 @@ def export_archive(root, host_id, now=None):
         "inspectedFiles": files,
         "tokenEvents": events,
         "duplicateCheckpoints": duplicates,
-        "threads": [
-            {"threadID": thread_id, "totalTokens": max(records),
-             "records": [records[counter] for counter in sorted(records)]}
-            for thread_id, records in sorted(threads.items()) if records
-        ],
+        "ambiguousThreads": ambiguous_threads,
+        "warnings": (["Some session copies have conflicting token chronology; their cumulative totals remain unattributed."]
+                     if ambiguous_threads else []),
+        "threads": exported_threads,
     }
 
 

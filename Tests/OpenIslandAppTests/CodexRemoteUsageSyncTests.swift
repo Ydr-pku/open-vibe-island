@@ -92,6 +92,39 @@ struct CodexRemoteUsageSyncTests {
         #expect(!threads.contains { $0["threadID"] as? String == parent })
     }
 
+    @Test
+    func conflictingCopiesRetainAnUnknownCumulativeAnchorWithoutBlockingOtherThreads() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let ambiguous = "01a0b72e-1b65-79b2-9e60-442f3e33316f"
+        let stable = "01a17795-9d40-74f3-8444-fe00bf19bcc3"
+        for (index, values) in [(ambiguous, 1_961_143, "2026-11-01T23:59:00Z"),
+                                (ambiguous, 136_770, "2026-11-02T00:02:00Z"),
+                                (stable, 50, "2026-11-02T00:03:00Z")].enumerated() {
+            let contents = """
+            {"type":"session_meta","payload":{"id":"\(values.0)"}}
+            {"type":"event_msg","timestamp":"\(values.2)","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":\(values.1)},"last_token_usage":{"total_tokens":\(values.1)}}}}
+            """ + "\n"
+            try Data(contents.utf8).write(to: directory.appendingPathComponent("rollout-\(index)-\(values.0).jsonl"))
+        }
+        let value = try #require(JSONSerialization.jsonObject(with: try await runExporter(root: root)) as? [String: Any])
+        #expect(value["complete"] as? Bool == true)
+        #expect(value["ambiguousThreads"] as? Int == 1)
+        #expect((value["warnings"] as? [String])?.count == 1)
+        let threads = try #require(value["threads"] as? [[String: Any]])
+        #expect(threads.count == 2)
+        let thread = try #require(threads.first { $0["threadID"] as? String == ambiguous })
+        let records = try #require(thread["records"] as? [[String: Any]])
+        #expect(thread["totalTokens"] as? Int == 1_961_143)
+        #expect(records.count == 1)
+        #expect(records[0]["lastTokens"] as? Int == 0)
+        #expect(records[0]["timestamp"] as? Double == ISO8601DateFormatter().date(from: "2026-11-02T00:02:00Z")?.timeIntervalSince1970)
+        let other = try #require(threads.first { $0["threadID"] as? String == stable })
+        #expect(other["totalTokens"] as? Int == 50)
+    }
+
     @Test(.enabled(if: zstdToolURL != nil))
     func compressedOriginalAndSplitLogMergeWithoutLosingHistoricalTimestamps() async throws {
         let root = try temporaryDirectory()
