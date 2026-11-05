@@ -647,6 +647,8 @@ struct SetupSettingsPane: View {
                 }
             }
 
+            CodexRemoteUsageSettingsSection(model: model)
+
             Section(lang.t("setup.section.permissions")) {
                 HStack(alignment: .top) {
                     Label {

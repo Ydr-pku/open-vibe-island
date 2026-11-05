@@ -262,3 +262,19 @@
 "npu.trust.title" = "核對 SSH 主機指紋";
 "npu.trust.confirm" = "信任並連線";
 "npu.cancel" = "取消";
+
+// Remote token backfill
+"settings.remoteUsage.title" = "遠端用量回填";
+"settings.remoteUsage.description" = "重新連線後補齊帶日期的用量。使用已設定的 SSH 別名，僅同步用量資訊。";
+"settings.remoteUsage.remove" = "移除";
+"settings.remoteUsage.noHost" = "先在 Codex Desktop 連線遠端專案，再設定用量回填。";
+"settings.remoteUsage.host" = "Codex 遠端主機";
+"settings.remoteUsage.sshAlias" = "SSH 別名（例如 macserver）";
+"settings.remoteUsage.codexHome" = "遠端 Codex 目錄（選填）";
+"settings.remoteUsage.save" = "儲存並同步";
+"settings.remoteUsage.sync" = "立即同步";
+"settings.remoteUsage.syncing" = "正在回填遠端用量…";
+"settings.remoteUsage.lastSync" = "最近成功同步：";
+
+"island.usageHistory.localSource" = "本機";
+"island.usageHistory.remoteSource" = "遠端";
