@@ -268,3 +268,6 @@
 "settings.remoteUsage.sync" = "Sync now";
 "settings.remoteUsage.syncing" = "Recovering remote token history…";
 "settings.remoteUsage.lastSync" = "Last successful sync:";
+
+"island.usageHistory.localSource" = "This Mac";
+"island.usageHistory.remoteSource" = "Remote";

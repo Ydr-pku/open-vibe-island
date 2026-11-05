@@ -60,3 +60,8 @@ Source profiles are stored in `~/Library/Application Support/open-island/codex-r
 the usage-only archive cache is `codex-remote-usage-archives.json` in that directory.
 Profiles contain `hostID`, `sshAlias`, and optional `codexHome`, without passwords.
 Removing a source stops future syncs and retains previously recovered history.
+
+The session 30-day and today 24-hour charts stack usage by machine after
+deduplication. This Mac is green; configured remote sources use distinct colors
+and their SSH aliases in the legend. Hover a bar to see the per-machine values.
+The account chart remains account-wide because it has no machine breakdown.

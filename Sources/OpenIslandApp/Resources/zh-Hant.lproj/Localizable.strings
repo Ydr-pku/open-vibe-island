@@ -267,3 +267,6 @@
 "settings.remoteUsage.sync" = "立即同步";
 "settings.remoteUsage.syncing" = "正在回填遠端用量…";
 "settings.remoteUsage.lastSync" = "最近成功同步：";
+
+"island.usageHistory.localSource" = "本機";
+"island.usageHistory.remoteSource" = "遠端";

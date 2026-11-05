@@ -528,6 +528,7 @@ struct IslandPanelView: View {
         let official = usageHistoryPoints(kind: .officialDaily)
         let local = usageHistoryPoints(kind: .localDaily)
         let hourly = usageHistoryPoints(kind: .localHourly)
+        let sources = usageSourceStyles
 
         return VStack(spacing: 5) {
             HStack {
@@ -550,14 +551,31 @@ struct IslandPanelView: View {
             UsageMiniChartRow(
                 label: lang.t("island.usageHistory.local30d"),
                 points: local,
-                tint: .green.opacity(0.9)
+                tint: .green.opacity(0.9),
+                usesSourceColors: true
             )
             UsageMiniChartRow(
                 label: lang.t("island.usageHistory.today24h"),
                 points: hourly,
                 tint: .orange.opacity(0.92),
-                showsHourAxis: true
+                showsHourAxis: true,
+                usesSourceColors: true
             )
+            if !sources.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(sources) { source in
+                            HStack(spacing: 3) {
+                                Circle().fill(source.color).frame(width: 5, height: 5)
+                                Text(source.label)
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundStyle(V6Palette.paper.opacity(0.65))
+                            }
+                        }
+                    }
+                }
+                .frame(height: 11)
+            }
             if let tokens = model.codexLocalUsageSnapshot?.unattributedRemoteTokens, tokens > 0 {
                 HStack {
                     Text(lang.t("island.usageHistory.remoteUnattributed"))
@@ -593,6 +611,41 @@ struct IslandPanelView: View {
         case officialDaily
         case localDaily
         case localHourly
+    }
+
+    private var usageSourceStyles: [UsageSourceStyle] {
+        let ids = (model.codexLocalUsageSnapshot?.sources ?? []).map(\.sourceID).sorted {
+            if $0 == "local" { return $1 != "local" }
+            if $1 == "local" { return false }
+            return $0 < $1
+        }
+        let remoteIDs = ids.filter { $0 != "local" }
+        let palette: [Color] = [.orange, .cyan, .purple, .pink, .yellow, .mint, .indigo]
+        return ids.map { id in
+            if id == "local" {
+                return UsageSourceStyle(id: id, label: lang.t("island.usageHistory.localSource"), color: .green)
+            }
+            let index = remoteIDs.firstIndex(of: id) ?? 0
+            let alias = model.hooks.codexRemoteUsageSources.first { $0.hostID == id }?.sshAlias
+            let label = alias ?? (remoteIDs.count == 1
+                ? lang.t("island.usageHistory.remoteSource")
+                : lang.t("island.usageHistory.remoteSource") + " \(index + 1)")
+            let color = index < palette.count ? palette[index] : Color(
+                hue: (Double(index) * 0.61803398875).truncatingRemainder(dividingBy: 1),
+                saturation: 0.65, brightness: 0.95
+            )
+            return UsageSourceStyle(id: id, label: label, color: color)
+        }
+    }
+
+    private func usageSourceSegments(key: String, hourly: Bool) -> [UsageHistorySegment] {
+        let buckets = model.codexLocalUsageSnapshot?.sources ?? []
+        return usageSourceStyles.compactMap { style in
+            guard let source = buckets.first(where: { $0.sourceID == style.id }),
+                  let tokens = (hourly ? source.hourlyBuckets : source.dailyBuckets).first(where: { $0.key == key })?.tokens,
+                  tokens > 0 else { return nil }
+            return UsageHistorySegment(source: style, tokens: tokens)
+        }
     }
 
     private func usageHistoryPoints(kind: UsageHistoryKind) -> [UsageHistoryPoint] {
@@ -639,7 +692,8 @@ struct IslandPanelView: View {
                 return UsageHistoryPoint(
                     id: "local-\(key)",
                     label: key,
-                    tokens: values[key] ?? (isCovered && !remoteHasUnattributed ? 0 : nil)
+                    tokens: values[key] ?? (isCovered && !remoteHasUnattributed ? 0 : nil),
+                    segments: usageSourceSegments(key: key, hourly: false)
                 )
             }
 
@@ -656,7 +710,8 @@ struct IslandPanelView: View {
                 return UsageHistoryPoint(
                     id: "hour-\(key)",
                     label: "\(key):00",
-                    tokens: hour <= currentHour ? (values[key] ?? (remoteHasUnattributed ? nil : 0)) : nil
+                    tokens: hour <= currentHour ? (values[key] ?? (remoteHasUnattributed ? nil : 0)) : nil,
+                    segments: usageSourceSegments(key: key, hourly: true)
                 )
             }
         }
@@ -923,6 +978,19 @@ private struct UsageHistoryPoint: Identifiable {
     let id: String
     let label: String
     let tokens: Int64?
+    var segments: [UsageHistorySegment] = []
+}
+
+private struct UsageSourceStyle: Identifiable {
+    let id: String
+    let label: String
+    let color: Color
+}
+
+private struct UsageHistorySegment: Identifiable {
+    var id: String { source.id }
+    let source: UsageSourceStyle
+    let tokens: Int64
 }
 
 private struct UsageMiniChartRow: View {
@@ -930,6 +998,7 @@ private struct UsageMiniChartRow: View {
     let points: [UsageHistoryPoint]
     let tint: Color
     var showsHourAxis = false
+    var usesSourceColors = false
 
     private var peakTokens: Int64 {
         max(points.compactMap(\.tokens).max() ?? 0, 1)
@@ -980,7 +1049,7 @@ private struct UsageMiniChartRow: View {
 
                 Text(totalAndMaximumText)
                     .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(tint.opacity(0.86))
+                    .foregroundStyle((usesSourceColors ? V6Palette.paper : tint).opacity(0.86))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                     .allowsTightening(true)
@@ -1027,10 +1096,24 @@ private struct UsageMiniChartRow: View {
         if let tokens = point.tokens {
             let ratio = Double(tokens) / Double(peakTokens)
             let height = tokens == 0 ? 1 : max(2, availableHeight * ratio)
-            RoundedRectangle(cornerRadius: min(width / 2, 1.5), style: .continuous)
-                .fill(tint.opacity(tokens == 0 ? 0.18 : 0.78))
-                .frame(width: width, height: height)
-                .help("\(point.label) · \(Self.exactTokenText(tokens))")
+            Group {
+                if tokens > 0, !point.segments.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(point.segments.reversed()) { segment in
+                            Rectangle()
+                                .fill(segment.source.color.opacity(0.82))
+                                .frame(height: height * Double(segment.tokens) / Double(tokens))
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: min(width / 2, 1.5), style: .continuous))
+                } else {
+                    RoundedRectangle(cornerRadius: min(width / 2, 1.5), style: .continuous)
+                        .fill(tint.opacity(tokens == 0 ? 0.18 : 0.78))
+                }
+            }
+            .frame(width: width, height: height)
+            .help((["\(point.label) · \(Self.exactTokenText(tokens))"]
+                + point.segments.map { "\($0.source.label) · \(Self.exactTokenText($0.tokens))" }).joined(separator: "\n"))
         } else {
             RoundedRectangle(cornerRadius: min(width / 2, 1.5), style: .continuous)
                 .strokeBorder(.white.opacity(0.1), lineWidth: 0.6)
