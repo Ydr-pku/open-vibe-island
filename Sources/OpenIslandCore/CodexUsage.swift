@@ -109,6 +109,18 @@ public struct CodexAccountUsageSnapshot: Equatable, Codable, Sendable {
     }
 }
 
+public struct CodexUsageSourceBuckets: Equatable, Codable, Sendable {
+    public var sourceID: String
+    public var dailyBuckets: [CodexUsageHistoryBucket]
+    public var hourlyBuckets: [CodexUsageHistoryBucket]
+
+    public init(sourceID: String, dailyBuckets: [CodexUsageHistoryBucket], hourlyBuckets: [CodexUsageHistoryBucket]) {
+        self.sourceID = sourceID
+        self.dailyBuckets = dailyBuckets
+        self.hourlyBuckets = hourlyBuckets
+    }
+}
+
 public struct CodexLocalUsageSnapshot: Equatable, Codable, Sendable {
     public var dailyBuckets: [CodexUsageHistoryBucket]
     public var hourlyBuckets: [CodexUsageHistoryBucket]
@@ -118,19 +130,36 @@ public struct CodexLocalUsageSnapshot: Equatable, Codable, Sendable {
     public var unattributedRemoteTokens: Int64?
     /// Today's remote usage known by day but not by individual hour.
     public var unattributedRemoteHourlyTokens: Int64?
+    public var sources: [CodexUsageSourceBuckets]
 
     public init(
         dailyBuckets: [CodexUsageHistoryBucket],
         hourlyBuckets: [CodexUsageHistoryBucket],
         capturedAt: Date,
         unattributedRemoteTokens: Int64? = nil,
-        unattributedRemoteHourlyTokens: Int64? = nil
+        unattributedRemoteHourlyTokens: Int64? = nil,
+        sources: [CodexUsageSourceBuckets] = []
     ) {
         self.dailyBuckets = dailyBuckets
         self.hourlyBuckets = hourlyBuckets
         self.capturedAt = capturedAt
         self.unattributedRemoteTokens = unattributedRemoteTokens
         self.unattributedRemoteHourlyTokens = unattributedRemoteHourlyTokens
+        self.sources = sources
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case dailyBuckets, hourlyBuckets, capturedAt, unattributedRemoteTokens, unattributedRemoteHourlyTokens, sources
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        dailyBuckets = try values.decode([CodexUsageHistoryBucket].self, forKey: .dailyBuckets)
+        hourlyBuckets = try values.decode([CodexUsageHistoryBucket].self, forKey: .hourlyBuckets)
+        capturedAt = try values.decode(Date.self, forKey: .capturedAt)
+        unattributedRemoteTokens = try values.decodeIfPresent(Int64.self, forKey: .unattributedRemoteTokens)
+        unattributedRemoteHourlyTokens = try values.decodeIfPresent(Int64.self, forKey: .unattributedRemoteHourlyTokens)
+        sources = try values.decodeIfPresent([CodexUsageSourceBuckets].self, forKey: .sources) ?? []
     }
 }
 
@@ -408,6 +437,7 @@ public enum CodexLocalUsageLoader {
         var range: CodexUsageTokenRange
         var timestamp: Date
         var priority: Int
+        var sourceID: String
     }
 
     public static func load(
@@ -446,6 +476,8 @@ public enum CodexLocalUsageLoader {
         let candidateCutoff = firstDay.addingTimeInterval(-86_400)
         var daily: [String: Int64] = [:]
         var hourly: [String: Int64] = [:]
+        var sourceDaily: [String: [String: Int64]] = [:]
+        var sourceHourly: [String: [String: Int64]] = [:]
         var exactByThread: [String: [ExactUsage]] = [:]
         var remoteTotals: [String: Int64] = [:]
         var unattributedRemoteTokens: Int64 = 0
@@ -458,7 +490,7 @@ public enum CodexLocalUsageLoader {
             for thread in archive.threads {
                 let id = thread.threadID.lowercased()
                 let records = thread.records.sorted(by: CodexRemoteUsageArchive.recordOrder)
-                exactByThread[id, default: []] += exactRecords(records, priority: 0, now: now)
+                exactByThread[id, default: []] += exactRecords(records, priority: 0, sourceID: archive.hostID, now: now)
                 if records.last.map({ $0.timestamp >= firstDay && $0.timestamp <= now }) == true {
                     remoteTotals[id] = max(remoteTotals[id, default: 0], thread.totalTokens)
                 }
@@ -477,7 +509,7 @@ public enum CodexLocalUsageLoader {
                       (values.contentModificationDate ?? .distantPast) >= candidateCutoff else { continue }
                 let rollout = localRecords(fileURL: fileURL)
                 let id = rollout.threadID ?? threadID(from: fileURL) ?? fileURL.standardizedFileURL.path
-                exactByThread[id, default: []] += exactRecords(rollout.records, priority: 1, now: now)
+                exactByThread[id, default: []] += exactRecords(rollout.records, priority: 1, sourceID: "local", now: now)
             }
         }
 
@@ -493,7 +525,8 @@ public enum CodexLocalUsageLoader {
             if old == nil || usage.totalTokens > old!.totalTokens
                 || (usage.totalTokens == old!.totalTokens && usage.intervals != nil && old!.intervals == nil)
                 || (usage.totalTokens == old!.totalTokens && (usage.intervals != nil) == (old!.intervals != nil)
-                    && usage.updatedAt > old!.updatedAt) {
+                    && (usage.updatedAt > old!.updatedAt
+                        || (usage.updatedAt == old!.updatedAt && usage.hostID < old!.hostID))) {
                 desktopByThread[id] = usage
             }
         }
@@ -503,13 +536,15 @@ public enum CodexLocalUsageLoader {
             let exact = (exactByThread[id] ?? []).sorted {
                 if $0.priority != $1.priority { return $0.priority < $1.priority }
                 if $0.range.lower != $1.range.lower { return $0.range.lower < $1.range.lower }
-                return $0.timestamp < $1.timestamp
+                if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+                return $0.sourceID < $1.sourceID
             }
             for entry in exact {
                 let tokens = covered.uncovered(entry.range).reduce(Int64(0)) { $0 + $1.count }
                 covered.insert(entry.range)
                 guard tokens > 0, entry.timestamp >= firstDay else { continue }
-                add(tokens, at: entry.timestamp, today: today, calendar: calendar, daily: &daily, hourly: &hourly)
+                add(tokens, at: entry.timestamp, today: today, calendar: calendar, sourceID: entry.sourceID,
+                    daily: &daily, hourly: &hourly, sourceDaily: &sourceDaily, sourceHourly: &sourceHourly)
             }
 
             if let usage = desktopByThread[id] {
@@ -531,11 +566,15 @@ public enum CodexLocalUsageLoader {
                     guard interval.endedAt >= firstDay else { continue }
                     if usage.hostID == "local" || (interval.startedAt <= interval.endedAt
                         && calendar.isDate(interval.startedAt, inSameDayAs: interval.endedAt)) {
-                        daily[dayKey(for: interval.endedAt, calendar: calendar), default: 0] += tokens
+                        let day = dayKey(for: interval.endedAt, calendar: calendar)
+                        daily[day, default: 0] += tokens
+                        sourceDaily[usage.hostID, default: [:]][day, default: 0] += tokens
                         if interval.endedAt >= today {
                             if usage.hostID == "local" || calendar.isDate(interval.startedAt, equalTo: interval.endedAt, toGranularity: .hour) {
                                 let hour = calendar.component(.hour, from: interval.endedAt)
-                                hourly[String(format: "%02d", hour), default: 0] += tokens
+                                let hourKey = String(format: "%02d", hour)
+                                hourly[hourKey, default: 0] += tokens
+                                sourceHourly[usage.hostID, default: [:]][hourKey, default: 0] += tokens
                             } else { unattributedRemoteHourlyTokens += tokens }
                         }
                     } else { unattributedRemoteTokens += tokens }
@@ -557,11 +596,20 @@ public enum CodexLocalUsageLoader {
             hourlyBuckets: hourly.map { .init(key: $0.key, tokens: $0.value) }.sorted { $0.key < $1.key },
             capturedAt: now,
             unattributedRemoteTokens: unattributedRemoteTokens > 0 ? unattributedRemoteTokens : nil,
-            unattributedRemoteHourlyTokens: unattributedRemoteHourlyTokens > 0 ? unattributedRemoteHourlyTokens : nil
+            unattributedRemoteHourlyTokens: unattributedRemoteHourlyTokens > 0 ? unattributedRemoteHourlyTokens : nil,
+            sources: sourceDaily.keys.sorted {
+                if $0 == "local" { return $1 != "local" }
+                if $1 == "local" { return false }
+                return $0 < $1
+            }.map { id in
+                CodexUsageSourceBuckets(sourceID: id,
+                    dailyBuckets: sourceDaily[id, default: [:]].map { .init(key: $0.key, tokens: $0.value) }.sorted { $0.key < $1.key },
+                    hourlyBuckets: sourceHourly[id, default: [:]].map { .init(key: $0.key, tokens: $0.value) }.sorted { $0.key < $1.key })
+            }
         )
     }
 
-    private static func exactRecords(_ records: [CodexRemoteUsageRecord], priority: Int, now: Date) -> [ExactUsage] {
+    private static func exactRecords(_ records: [CodexRemoteUsageRecord], priority: Int, sourceID: String, now: Date) -> [ExactUsage] {
         var previous: Int64?
         var result: [ExactUsage] = []
         for record in records {
@@ -577,7 +625,9 @@ public enum CodexLocalUsageLoader {
                 lower = old
             } else { continue }
             let range = CodexUsageTokenRange(lower: lower, upper: record.totalTokens)
-            if range.count > 0 { result.append(.init(range: range, timestamp: record.timestamp, priority: priority)) }
+            if range.count > 0 {
+                result.append(.init(range: range, timestamp: record.timestamp, priority: priority, sourceID: sourceID))
+            }
         }
         return result
     }
@@ -621,11 +671,16 @@ public enum CodexLocalUsageLoader {
         return (canonicalThreadID, records)
     }
 
-    private static func add(_ tokens: Int64, at timestamp: Date, today: Date, calendar: Calendar,
-                            daily: inout [String: Int64], hourly: inout [String: Int64]) {
-        daily[dayKey(for: timestamp, calendar: calendar), default: 0] += tokens
+    private static func add(_ tokens: Int64, at timestamp: Date, today: Date, calendar: Calendar, sourceID: String,
+                            daily: inout [String: Int64], hourly: inout [String: Int64],
+                            sourceDaily: inout [String: [String: Int64]], sourceHourly: inout [String: [String: Int64]]) {
+        let day = dayKey(for: timestamp, calendar: calendar)
+        daily[day, default: 0] += tokens
+        sourceDaily[sourceID, default: [:]][day, default: 0] += tokens
         if timestamp >= today {
-            hourly[String(format: "%02d", calendar.component(.hour, from: timestamp)), default: 0] += tokens
+            let hour = String(format: "%02d", calendar.component(.hour, from: timestamp))
+            hourly[hour, default: 0] += tokens
+            sourceHourly[sourceID, default: [:]][hour, default: 0] += tokens
         }
     }
 

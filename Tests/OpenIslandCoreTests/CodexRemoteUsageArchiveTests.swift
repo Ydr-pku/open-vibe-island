@@ -105,6 +105,7 @@ struct CodexRemoteUsageArchiveTests {
         #expect(result.dailyBuckets == [.init(key: "2026-10-03", tokens: 100)])
         #expect(result.hourlyBuckets == [.init(key: "10", tokens: 100)])
         #expect(result.unattributedRemoteTokens == nil)
+        #expect(result.sources.map(\.sourceID) == [source.hostID])
     }
 
     @Test(arguments: [true, false])
@@ -177,5 +178,70 @@ struct CodexRemoteUsageArchiveTests {
         #expect(retained == [recovered])
         #expect(snapshot(retained).dailyBuckets == [
             .init(key: "2026-10-01", tokens: 100), .init(key: "2026-10-02", tokens: 50)])
+    }
+
+    @Test func sourceBucketsPartitionTotalsAcrossLocalAndTwoRemoteHosts() {
+        let first = archive([record(100, 100, "2026-10-03T10:00:00Z")])
+        let second = CodexRemoteUsageArchive(hostID: "remote-control:another", capturedAt: now, threads: [
+            .init(threadID: "01a17bf8-d21a-7ce0-b666-d0da803c9ed4", totalTokens: 200,
+                  records: [record(200, 200, "2026-10-03T11:00:00Z")])])
+        let local = CodexDesktopThreadUsage(threadID: "019fb0ab-c4d7-77d0-802d-0bcefdb2d789", totalTokens: 50,
+            updatedAt: date("2026-10-03T10:30:00Z"), startedAt: date("2026-10-03T10:00:00Z"))
+        let result = snapshot([first, second], ipc: [local])
+        #expect(result.sources.map(\.sourceID) == ["local", "remote-control:another", "remote-control:test"])
+        #expect(result.dailyBuckets == [.init(key: "2026-10-03", tokens: 350)])
+        #expect(result.hourlyBuckets == [.init(key: "10", tokens: 150), .init(key: "11", tokens: 200)])
+        #expect(combined(result.sources.flatMap(\.dailyBuckets)) == result.dailyBuckets)
+        #expect(combined(result.sources.flatMap(\.hourlyBuckets)) == result.hourlyBuckets)
+    }
+
+    @Test func localHandoffTailUsesLocalSourceWithoutDuplicatingRemotePrefix() {
+        let source = archive([record(100, 100, "2026-10-03T10:00:00Z")])
+        let local = CodexDesktopThreadUsage(threadID: id, totalTokens: 150,
+            updatedAt: date("2026-10-03T11:05:00Z"), startedAt: date("2026-10-03T09:00:00Z"))
+        let result = snapshot([source], ipc: [local])
+        #expect(result.sources == [
+            .init(sourceID: "local", dailyBuckets: [.init(key: "2026-10-03", tokens: 50)],
+                  hourlyBuckets: [.init(key: "11", tokens: 50)]),
+            .init(sourceID: source.hostID, dailyBuckets: [.init(key: "2026-10-03", tokens: 100)],
+                  hourlyBuckets: [.init(key: "10", tokens: 100)])])
+        #expect(combined(result.sources.flatMap(\.dailyBuckets)) == result.dailyBuckets)
+        #expect(combined(result.sources.flatMap(\.hourlyBuckets)) == result.hourlyBuckets)
+    }
+
+    @Test func duplicatedRemoteHostCopiesHaveOneDeterministicSource() {
+        let first = archive([record(100, 100, "2026-10-03T10:00:00Z")])
+        var second = first
+        second.hostID = "remote-control:another"
+        let result = snapshot([first, second])
+        #expect(result.sources.count == 1)
+        #expect(result.sources.first?.sourceID == second.hostID)
+        #expect(result.sources == snapshot([second, first]).sources)
+        #expect(result.dailyBuckets == [.init(key: "2026-10-03", tokens: 100)])
+    }
+
+    @Test func unknownRemoteHourAppearsOnlyInItsDailySourceBucket() {
+        let ipc = CodexDesktopThreadUsage(threadID: id, totalTokens: 100,
+            updatedAt: date("2026-10-03T11:05:00Z"), startedAt: date("2026-10-03T09:00:00Z"),
+            hostID: "remote-control:test")
+        let result = snapshot([], ipc: [ipc])
+        #expect(result.sources == [.init(sourceID: ipc.hostID,
+            dailyBuckets: [.init(key: "2026-10-03", tokens: 100)], hourlyBuckets: [])])
+        #expect(result.unattributedRemoteHourlyTokens == 100)
+        #expect(result.hourlyBuckets.isEmpty)
+    }
+
+    @Test func legacySnapshotDecodesWithoutSourceBucketsAndNewSourcesRoundTrip() throws {
+        let old = Data("{\"dailyBuckets\":[],\"hourlyBuckets\":[],\"capturedAt\":0}".utf8)
+        let decoded = try JSONDecoder().decode(CodexLocalUsageSnapshot.self, from: old)
+        #expect(decoded.sources.isEmpty)
+        let current = snapshot([archive([record(100, 100, "2026-10-03T10:00:00Z")])])
+        #expect(try JSONDecoder().decode(CodexLocalUsageSnapshot.self, from: JSONEncoder().encode(current)) == current)
+    }
+
+    private func combined(_ buckets: [CodexUsageHistoryBucket]) -> [CodexUsageHistoryBucket] {
+        Dictionary(grouping: buckets, by: \.key).map { key, values in
+            CodexUsageHistoryBucket(key: key, tokens: values.reduce(0) { $0 + $1.tokens })
+        }.sorted { $0.key < $1.key }
     }
 }
