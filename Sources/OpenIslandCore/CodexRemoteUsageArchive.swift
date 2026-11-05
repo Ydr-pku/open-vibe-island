@@ -118,7 +118,27 @@ public struct CodexRemoteUsageArchiveStore: Sendable {
                 if let old = threads[id] {
                     // A stale or truncated remote file must not erase retained history.
                     guard incoming.totalTokens >= old.totalTokens else { continue }
-                    let records = Array(Set(old.records + incoming.records)).sorted(by: CodexRemoteUsageArchive.recordOrder)
+                    // A moved archive can reveal the original event earlier
+                    // than a previously retained observation of that counter.
+                    // Keep one checkpoint per counter, so a later duplicate
+                    // cannot appear after a newer, higher counter.
+                    var checkpoints: [Int64: CodexRemoteUsageRecord] = [:]
+                    for record in old.records + incoming.records {
+                        guard let previous = checkpoints[record.totalTokens] else {
+                            checkpoints[record.totalTokens] = record
+                            continue
+                        }
+                        if record.timestamp < previous.timestamp {
+                            checkpoints[record.totalTokens] = record
+                        } else if record.timestamp == previous.timestamp {
+                            var checkpoint = previous
+                            // Conflicting per-event details must not invent a
+                            // larger known range. Prefer the smaller known tail.
+                            checkpoint.lastTokens = [previous.lastTokens, record.lastTokens].compactMap { $0 }.min()
+                            checkpoints[record.totalTokens] = checkpoint
+                        }
+                    }
+                    let records = checkpoints.values.sorted(by: CodexRemoteUsageArchive.recordOrder)
                     threads[id] = CodexRemoteUsageThread(threadID: id, totalTokens: incoming.totalTokens, records: records)
                 } else {
                     threads[id] = incoming

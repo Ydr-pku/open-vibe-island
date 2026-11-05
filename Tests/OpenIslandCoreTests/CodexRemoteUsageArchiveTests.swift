@@ -137,4 +137,20 @@ struct CodexRemoteUsageArchiveTests {
             try CodexRemoteUsageArchiveStore.decode(Data(raw.dropLast().utf8), now: now)
         }
     }
+
+    @Test func rediscoveredEarlierCheckpointReplacesLaterDuplicateObservation() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("usage.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let store = CodexRemoteUsageArchiveStore(fileURL: file)
+        try store.merge(archive([record(100, 100, "2026-10-03T11:00:00Z")]), now: now)
+        let recovered = archive([record(100, 100, "2026-10-01T09:00:00Z"),
+                                 record(150, 50, "2026-10-02T10:00:00Z")])
+        try store.merge(recovered, now: now)
+        try store.merge(recovered, now: now)
+        let retained = store.load(now: now)
+        #expect(retained == [recovered])
+        #expect(snapshot(retained).dailyBuckets == [
+            .init(key: "2026-10-01", tokens: 100), .init(key: "2026-10-02", tokens: 50)])
+    }
 }
