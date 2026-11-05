@@ -58,6 +58,36 @@ struct CodexRemoteUsageSyncTests {
     }
 
     @Test
+    func captureTimeIncludesEventsWrittenDuringTheScan() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let contents = """
+        {"type":"event_msg","timestamp":"2026-11-02T00:00:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":40},"last_token_usage":{"total_tokens":40}}}}
+        """ + "\n"
+        try Data(contents.utf8).write(to: directory.appendingPathComponent("rollout-01a19099-59ed-7a43-b41f-7d5462f1c4eb.jsonl"))
+        let script = try #require(CodexRemoteUsageSync.defaultExporterURL)
+        let program = """
+        import json, runpy, sys
+        from pathlib import Path
+        from unittest.mock import patch
+        module = runpy.run_path(sys.argv[1])
+        with patch('time.time', side_effect=[1793577600.0, 1793577602.0]):
+            archive = module['export_archive'](Path(sys.argv[2]), 'remote-control:test-environment')
+        print(json.dumps(archive))
+        """
+        let output = try await RemoteUsageCommand.run(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: ["-c", program, script.path, root.path], input: Data(), timeout: 10, maximumOutputBytes: 1_048_576)
+        let value = try #require(JSONSerialization.jsonObject(with: output) as? [String: Any])
+        let capturedAt = try #require(value["capturedAt"] as? Double)
+        let threads = try #require(value["threads"] as? [[String: Any]])
+        let records = try #require(threads[0]["records"] as? [[String: Any]])
+        let timestamp = try #require(records[0]["timestamp"] as? Double)
+        #expect(timestamp <= capturedAt)
+        #expect(capturedAt == 1793577602.0)
+    }
+
+    @Test
     func exporterRejectsCorruptCompletedLinesAndWrongRemoteHost() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -142,6 +172,19 @@ struct CodexRemoteUsageSyncTests {
         catch let error as CodexRemoteUsageSyncError {
             if case .cancelled = error {} else { Issue.record("Unexpected cancellation error: \(error)") }
         }
+    }
+
+    @Test
+    func timeoutRemainsBoundedWhenAnExitedProcessLeavesAPipeInItsChild() async throws {
+        let started = ContinuousClock.now
+        let program = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)'])"
+        do {
+            _ = try await RemoteUsageCommand.run(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: ["-c", program], input: Data(), timeout: 0.1, maximumOutputBytes: 1024)
+            Issue.record("A descendant's inherited pipe bypassed the deadline")
+        } catch let error as CodexRemoteUsageSyncError {
+            if case .timedOut = error {} else { Issue.record("Unexpected inherited-pipe error: \(error)") }
+        }
+        #expect(started.duration(to: .now) < .seconds(1))
     }
 
     private func temporaryDirectory() throws -> URL {

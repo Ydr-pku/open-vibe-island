@@ -105,7 +105,9 @@ def export_archive(root, host_id, now=None):
         "complete": True,
         "hostID": host_id,
         "remoteEnvironmentID": environment_id,
-        "capturedAt": now,
+        # Active writers can append while the archive is scanned. Describe
+        # completion time so newly read events never follow the capture bound.
+        "capturedAt": max(now, time.time()),
         "inspectedFiles": files,
         "tokenEvents": events,
         "duplicateCheckpoints": duplicates,

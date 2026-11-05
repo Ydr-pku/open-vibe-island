@@ -210,7 +210,36 @@ final class RemoteUsageCommand: @unchecked Sendable {
             readers.enter()
             DispatchQueue.global(qos: .utility).async { [self] in
                 defer { try? handle.close(); readers.leave() }
-                while let chunk = try? handle.read(upToCount: 65_536), !chunk.isEmpty {
+                let descriptor = handle.fileDescriptor
+                let flags = fcntl(descriptor, F_GETFL)
+                guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+                    stop(.commandFailed(-1, "Cannot read remote token export."))
+                    return
+                }
+                var buffer = [UInt8](repeating: 0, count: 65_536)
+                while true {
+                    // A descendant can inherit the pipe after SSH exits. A
+                    // blocking FileHandle.read would then ignore our deadline.
+                    lock.lock()
+                    let stopped = failure != nil
+                    lock.unlock()
+                    if stopped { break }
+                    var status = pollfd(fd: descriptor, events: Int16(POLLIN | POLLHUP | POLLERR), revents: 0)
+                    let ready = poll(&status, 1, 100)
+                    if ready == 0 { continue }
+                    if ready < 0 {
+                        if errno == EINTR { continue }
+                        stop(.commandFailed(-1, "Cannot read remote token export."))
+                        break
+                    }
+                    let count = buffer.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
+                    if count == 0 { break }
+                    if count < 0 {
+                        if errno == EINTR || errno == EAGAIN { continue }
+                        stop(.commandFailed(-1, "Cannot read remote token export."))
+                        break
+                    }
+                    let chunk = Data(buffer.prefix(count))
                     lock.lock()
                     if isOutput {
                         if output.count <= maximumOutputBytes - chunk.count { output.append(chunk) }
