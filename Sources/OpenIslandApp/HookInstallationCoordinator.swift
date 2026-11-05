@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import Network
 import Observation
 import OpenIslandCore
 
@@ -8,8 +10,22 @@ final class HookInstallationCoordinator {
     @ObservationIgnored
     let intentStore: AgentIntentStore
 
-    init(intentStore: AgentIntentStore = AgentIntentStore()) {
+    init(
+        intentStore: AgentIntentStore = AgentIntentStore(),
+        remoteUsageSync: CodexRemoteUsageSync = CodexRemoteUsageSync(),
+        remoteUsageArchiveStore: CodexRemoteUsageArchiveStore = CodexRemoteUsageArchiveStore(),
+        remoteUsageSourcesURL: URL = CodexRemoteUsageSync.defaultSourcesFileURL
+    ) {
         self.intentStore = intentStore
+        self.remoteUsageSync = remoteUsageSync
+        self.remoteUsageArchiveStore = remoteUsageArchiveStore
+        self.remoteUsageSourcesURL = remoteUsageSourcesURL
+        do {
+            codexRemoteUsageSources = try CodexRemoteUsageSync.loadSources(from: remoteUsageSourcesURL)
+        } catch {
+            codexRemoteUsageError = error.localizedDescription
+        }
+        codexRemoteUsageLastSyncAt = remoteUsageArchiveStore.load().map(\.capturedAt).max()
     }
 
     var codexHookStatus: CodexHookInstallationStatus?
@@ -27,6 +43,21 @@ final class HookInstallationCoordinator {
     var codexUsageSnapshot: CodexUsageSnapshot?
     var codexAccountUsageSnapshot: CodexAccountUsageSnapshot?
     var codexLocalUsageSnapshot: CodexLocalUsageSnapshot?
+    var codexRemoteUsageSources: [CodexRemoteUsageSource] = []
+    var codexRemoteUsageLastSyncAt: Date?
+    var codexRemoteUsageError: String?
+    var isCodexRemoteUsageSyncing = false
+
+    @ObservationIgnored private let remoteUsageSync: CodexRemoteUsageSync
+    @ObservationIgnored private let remoteUsageArchiveStore: CodexRemoteUsageArchiveStore
+    @ObservationIgnored private let remoteUsageSourcesURL: URL
+    @ObservationIgnored private var remoteUsageRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var remoteUsageFinishingTask: Task<Void, Never>?
+    @ObservationIgnored private var remoteUsageGeneration = UUID()
+    @ObservationIgnored private var codexUsageHistoryNeedsRefresh = false
+    @ObservationIgnored private var usageNetworkMonitor: NWPathMonitor?
+    @ObservationIgnored private var usageWakeObserver: NSObjectProtocol?
+    @ObservationIgnored private var usageNetworkWasAvailable = false
     var hooksBinaryURL: URL?
     var isCodexSetupBusy = false
     var isClaudeHookSetupBusy = false
@@ -51,6 +82,9 @@ final class HookInstallationCoordinator {
 
     @ObservationIgnored
     var codexDesktopUsageProvider: (() async -> [CodexDesktopThreadUsage])?
+
+    @ObservationIgnored
+    var codexLocalUsageHistoryProvider: (@Sendable ([CodexDesktopThreadUsage], [CodexRemoteUsageArchive]) async -> CodexLocalUsageSnapshot)?
 
     @ObservationIgnored
     var onCodexUsageHistoryUpdated: (() -> Void)?
@@ -821,25 +855,106 @@ final class HookInstallationCoordinator {
         }
     }
 
-    func refreshCodexUsageHistoryState() {
+    func refreshCodexUsageHistoryState(refreshRemote: Bool = true) {
         // Account history must refresh even while local IPC is still collecting
         // thread totals, including when the app-server finishes connecting.
         refreshCodexAccountUsageHistoryState()
-        guard codexUsageHistoryRefreshTask == nil else { return }
+        if refreshRemote { refreshCodexRemoteUsageHistory() }
+        guard codexUsageHistoryRefreshTask == nil else {
+            codexUsageHistoryNeedsRefresh = true
+            return
+        }
 
         codexUsageHistoryRefreshTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.codexUsageHistoryRefreshTask = nil }
+            defer {
+                self.codexUsageHistoryRefreshTask = nil
+                if self.codexUsageHistoryNeedsRefresh {
+                    self.codexUsageHistoryNeedsRefresh = false
+                    self.refreshCodexUsageHistoryState(refreshRemote: false)
+                }
+            }
 
             let liveDesktopThreadUsages = await self.codexDesktopUsageProvider?() ?? []
+            let remoteStore = self.remoteUsageArchiveStore
+            let snapshotProvider = self.codexLocalUsageHistoryProvider
             async let localSnapshot = Task.detached(priority: .utility) {
+                let archives = remoteStore.load()
+                if let snapshotProvider {
+                    return await snapshotProvider(liveDesktopThreadUsages, archives)
+                }
                 let desktopThreadUsages = CodexDesktopThreadUsageStore()
                     .loadAndMerge(liveUsages: liveDesktopThreadUsages)
-                return CodexLocalUsageLoader.load(desktopThreadUsages: desktopThreadUsages)
+                return CodexLocalUsageLoader.load(
+                    desktopThreadUsages: desktopThreadUsages,
+                    remoteArchives: archives
+                )
             }.value
 
             self.codexLocalUsageSnapshot = await localSnapshot
             self.onCodexUsageHistoryUpdated?()
+        }
+    }
+
+    func saveCodexRemoteUsageSource(_ source: CodexRemoteUsageSource) throws {
+        var sources = codexRemoteUsageSources.filter { $0.hostID != source.hostID }
+        sources.append(source)
+        try CodexRemoteUsageSync.saveSources(sources, to: remoteUsageSourcesURL)
+        codexRemoteUsageSources = sources
+        let previous = cancelCodexRemoteUsageRefresh()
+        refreshCodexRemoteUsageHistory(after: previous)
+    }
+
+    func removeCodexRemoteUsageSource(hostID: String) throws {
+        let sources = codexRemoteUsageSources.filter { $0.hostID != hostID }
+        try CodexRemoteUsageSync.saveSources(sources, to: remoteUsageSourcesURL)
+        codexRemoteUsageSources = sources
+        let previous = cancelCodexRemoteUsageRefresh()
+        refreshCodexRemoteUsageHistory(after: previous)
+    }
+
+    private func cancelCodexRemoteUsageRefresh() -> Task<Void, Never>? {
+        let previous = remoteUsageRefreshTask
+        previous?.cancel()
+        if let previous { remoteUsageFinishingTask = previous }
+        remoteUsageGeneration = UUID()
+        remoteUsageRefreshTask = nil
+        isCodexRemoteUsageSyncing = false
+        return previous
+    }
+
+    func refreshCodexRemoteUsageHistory(after previous: Task<Void, Never>? = nil) {
+        guard remoteUsageRefreshTask == nil, !codexRemoteUsageSources.isEmpty else { return }
+        let sources = codexRemoteUsageSources
+        let service = remoteUsageSync
+        let store = remoteUsageArchiveStore
+        let finishing = previous ?? remoteUsageFinishingTask
+        remoteUsageFinishingTask = nil
+        isCodexRemoteUsageSyncing = true
+        codexRemoteUsageError = nil
+        let generation = UUID()
+        remoteUsageGeneration = generation
+        remoteUsageRefreshTask = Task { [weak self] in
+            if let finishing { await finishing.value }
+            guard !Task.isCancelled else { return }
+            let archives = await service.sync(sources: sources)
+            let errors = await service.lastErrors
+            guard !Task.isCancelled, let self, self.remoteUsageGeneration == generation else { return }
+            let result = await Task.detached(priority: .utility) {
+                var errors: [String] = []
+                for archive in archives {
+                    do { try store.merge(archive) }
+                    catch { errors.append(error.localizedDescription) }
+                }
+                return (errors, store.load().map(\.capturedAt).max())
+            }.value
+            guard !Task.isCancelled, self.remoteUsageGeneration == generation else { return }
+            self.codexRemoteUsageError = (errors + result.0).isEmpty ? nil : (errors + result.0).joined(separator: "\n")
+            self.codexRemoteUsageLastSyncAt = result.1
+            self.isCodexRemoteUsageSyncing = false
+            self.remoteUsageRefreshTask = nil
+            // Rebuild with exact records without starting another SSH request.
+            self.refreshCodexUsageHistoryState(refreshRemote: false)
         }
     }
 
@@ -1157,6 +1272,27 @@ final class HookInstallationCoordinator {
     func startCodexUsageMonitoringIfNeeded() {
         guard codexUsageMonitorTask == nil else { return }
 
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let available = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                guard let self, self.codexUsageMonitorTask != nil else { return }
+                let reconnected = available && !self.usageNetworkWasAvailable
+                self.usageNetworkWasAvailable = available
+                if reconnected { self.refreshCodexUsageHistoryState() }
+            }
+        }
+        usageNetworkMonitor = monitor
+        monitor.start(queue: DispatchQueue(label: "app.openisland.remote-usage-network"))
+        usageWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.codexUsageMonitorTask != nil else { return }
+                self.refreshCodexUsageHistoryState()
+            }
+        }
+
         codexUsageMonitorTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
@@ -1169,6 +1305,19 @@ final class HookInstallationCoordinator {
                 }
                 try? await Task.sleep(for: .seconds(30))
             }
+        }
+    }
+
+    func stopCodexUsageMonitoring() {
+        codexUsageMonitorTask?.cancel()
+        codexUsageMonitorTask = nil
+        _ = cancelCodexRemoteUsageRefresh()
+        usageNetworkMonitor?.cancel()
+        usageNetworkMonitor = nil
+        usageNetworkWasAvailable = false
+        if let usageWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(usageWakeObserver)
+            self.usageWakeObserver = nil
         }
     }
 

@@ -255,3 +255,16 @@
 "npu.trust.title" = "Verify SSH host fingerprint";
 "npu.trust.confirm" = "Trust and connect";
 "npu.cancel" = "Cancel";
+
+// Remote token backfill
+"settings.remoteUsage.title" = "Remote token backfill";
+"settings.remoteUsage.description" = "Recover dated token usage after reconnecting. Uses an existing SSH alias and syncs usage metadata only.";
+"settings.remoteUsage.remove" = "Remove";
+"settings.remoteUsage.noHost" = "Connect a remote project in Codex Desktop to configure backfill.";
+"settings.remoteUsage.host" = "Codex remote host";
+"settings.remoteUsage.sshAlias" = "SSH alias (for example, macserver)";
+"settings.remoteUsage.codexHome" = "Remote Codex directory (optional)";
+"settings.remoteUsage.save" = "Save and sync";
+"settings.remoteUsage.sync" = "Sync now";
+"settings.remoteUsage.syncing" = "Recovering remote token history…";
+"settings.remoteUsage.lastSync" = "Last successful sync:";

@@ -262,6 +262,11 @@ final class AppModel {
         didSet {
             guard hasFinishedInit, showCodexUsage != oldValue else { return }
             UserDefaults.standard.set(showCodexUsage, forKey: Self.showCodexUsageDefaultsKey)
+            if showCodexUsage {
+                hooks.startCodexUsageMonitoringIfNeeded()
+            } else {
+                hooks.stopCodexUsageMonitoring()
+            }
         }
     }
     var completionReplyEnabled: Bool = false {
@@ -690,8 +695,9 @@ final class AppModel {
             self?.lastActionMessage = message
         }
         codexAppServer.onConnected = { [weak self] in
-            self?.hooks.refreshCodexUsageState()
-            self?.hooks.refreshCodexUsageHistoryState()
+            guard let self, self.showCodexUsage else { return }
+            self.hooks.refreshCodexUsageState()
+            self.hooks.refreshCodexUsageHistoryState()
         }
         codexAppServer.isSessionTracked = { [weak self] id in
             self?.state.session(id: id) != nil

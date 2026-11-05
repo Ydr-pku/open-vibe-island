@@ -34,3 +34,29 @@ An old thread can continue accumulating new observations without requiring that
 it was created within the chart's 30-day period. Offline observations remain
 cached; unknown or unavailable remote data must not be described as complete
 zero usage.
+
+## Reconnect backfill
+
+Settings → Setup → Remote token backfill maps an actual Codex remote host to an
+existing SSH alias. This mapping is explicit and independent of NPU monitoring.
+The remote machine must provide `python3`, retained Codex rollout logs, and
+noninteractive SSH authentication with a previously trusted host key. An optional
+Codex home overrides the remote `CODEX_HOME` / `~/.codex` default.
+
+When Codex usage is enabled, startup, network recovery, wake, and the regular
+two-minute history refresh trigger a bounded background SSH export. The exporter
+reads recent session and archived logs on the remote machine and sends only
+thread IDs, token counters, and timestamps. Conversation content remains remote.
+Failed or incomplete exports retain the last successful local cache. No service
+needs to stay running on the Mac while it is offline.
+
+Exact log records take precedence over sampled IPC intervals. Cumulative counter
+ranges identify the same tokens across repeated events, archive moves, local
+handoff copies, and repeat syncs. Only the IPC tail not covered by logs is added.
+Missing initial or intermediate log records remain explicitly unattributed; the
+app does not invent daily timestamps for their cumulative counters.
+
+Source profiles are stored in `~/Library/Application Support/open-island/codex-remote-usage-sources.json`;
+the usage-only archive cache is `codex-remote-usage-archives.json` in that directory.
+Profiles contain `hostID`, `sshAlias`, and optional `codexHome`, without passwords.
+Removing a source stops future syncs and retains previously recovered history.

@@ -255,3 +255,16 @@
 "npu.trust.title" = "核对 SSH 主机指纹";
 "npu.trust.confirm" = "信任并连接";
 "npu.cancel" = "取消";
+
+// Remote token backfill
+"settings.remoteUsage.title" = "远程用量回填";
+"settings.remoteUsage.description" = "重连后补齐带日期的用量。使用已配置的 SSH 别名，仅同步用量信息。";
+"settings.remoteUsage.remove" = "移除";
+"settings.remoteUsage.noHost" = "先在 Codex Desktop 连接远程项目，再配置用量回填。";
+"settings.remoteUsage.host" = "Codex 远程主机";
+"settings.remoteUsage.sshAlias" = "SSH 别名（例如 macserver）";
+"settings.remoteUsage.codexHome" = "远程 Codex 目录（可选）";
+"settings.remoteUsage.save" = "保存并同步";
+"settings.remoteUsage.sync" = "立即同步";
+"settings.remoteUsage.syncing" = "正在回填远程用量…";
+"settings.remoteUsage.lastSync" = "最近成功同步：";
