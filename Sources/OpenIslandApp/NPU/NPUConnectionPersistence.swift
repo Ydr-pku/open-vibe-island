@@ -69,6 +69,15 @@ final class NPUConnectionPersistence: ObservableObject {
         }
     }
 
+    /// A window opened while connected cannot load a password yet. Once it
+    /// becomes editable, fill the same endpoint without replacing user edits.
+    func connectionStateDidChange(from oldState: ConnectionState, to newState: ConnectionState, windowVisible: Bool) {
+        guard windowVisible, monitor.state == newState,
+              oldState == .connecting || oldState == .connected,
+              newState == .disconnected || newState == .failed else { return }
+        prepareForDisplay()
+    }
+
     /// Bind any entered password to its host, even if the user later edits it.
     func updatePassword(_ password: String) {
         monitor.password = password

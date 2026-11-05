@@ -378,6 +378,7 @@ struct NPUProcessPanel: View {
 final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate {
     private let monitor: MonitorStore
     private let persistence: NPUConnectionPersistence
+    private var allowsCredentialAutofill = true
 
     init(monitor: MonitorStore, persistence: NPUConnectionPersistence) {
         self.monitor = monitor
@@ -392,13 +393,17 @@ final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate 
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
-        window.contentView = NSHostingView(rootView: NPUConnectionView(monitor: monitor, persistence: persistence))
+        window.contentView = NSHostingView(rootView: NPUConnectionView(
+            monitor: monitor, persistence: persistence,
+            shouldLoadCredentials: { [weak self] in self?.allowsCredentialAutofill == true && self?.window?.isVisible == true }
+        ))
         window.center()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func show(loadCredential: Bool = true) {
+        allowsCredentialAutofill = loadCredential
         if loadCredential, window?.isVisible != true { persistence.prepareForDisplay() }
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -415,6 +420,7 @@ final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate 
 private struct NPUConnectionView: View {
     @ObservedObject var monitor: MonitorStore
     @ObservedObject var persistence: NPUConnectionPersistence
+    var shouldLoadCredentials: () -> Bool
     private enum Field { case address, password }
     @FocusState private var focusedField: Field?
     private var lang: LanguageManager { .shared }
@@ -478,6 +484,9 @@ private struct NPUConnectionView: View {
         .preferredColorScheme(.dark)
         .onAppear { focusedField = monitor.connectionInput.isEmpty ? .address : .password }
         .onChange(of: monitor.connectionInput) { _, address in persistence.addressDidChange(address) }
+        .onChange(of: monitor.state) { oldState, newState in
+            persistence.connectionStateDidChange(from: oldState, to: newState, windowVisible: shouldLoadCredentials())
+        }
         .sheet(item: $monitor.hostTrustRequest) { request in
             VStack(alignment: .leading, spacing: 18) {
                 Text(lang.t("npu.trust.title")).font(.headline)

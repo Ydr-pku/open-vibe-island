@@ -5,6 +5,39 @@ import Testing
 @MainActor
 struct NPUConnectionPersistenceTests {
     @Test
+    func visibleWindowAutofillsAfterDisconnectOrFailureWithoutOverwritingEdits() throws {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let credentials = FakeCredentials()
+        let endpoint = SSHEndpoint(host: "node.example", port: 22, user: "user")
+        try credentials.save("saved-secret", for: endpoint)
+        let store = MonitorStore(defaults: defaults, startsTimer: false)
+        let persistence = NPUConnectionPersistence(monitor: store, credentials: credentials, defaults: defaults)
+        store.connectionInput = "user@node.example"
+        store.state = .connected
+        persistence.prepareForDisplay()
+        #expect(store.password.isEmpty)
+
+        store.state = .disconnected
+        persistence.connectionStateDidChange(from: .connected, to: .disconnected, windowVisible: true)
+        #expect(store.password == "saved-secret")
+        persistence.updatePassword("user-edited-secret")
+        persistence.connectionStateDidChange(from: .connecting, to: .disconnected, windowVisible: true)
+        #expect(store.password == "user-edited-secret")
+
+        persistence.updateAddress("user@other.example")
+        #expect(store.password.isEmpty)
+        store.state = .failed
+        persistence.connectionStateDidChange(from: .connecting, to: .failed, windowVisible: true)
+        #expect(store.password.isEmpty)
+        store.connectionInput = "user@node.example"
+        persistence.connectionStateDidChange(from: .connecting, to: .failed, windowVisible: false)
+        #expect(store.password.isEmpty)
+        persistence.connectionStateDidChange(from: .connecting, to: .failed, windowVisible: true)
+        #expect(store.password == "saved-secret")
+    }
+
+    @Test
     func savesOnlyAfterSuccessfulSamplingAndRestoresAfterShutdown() async throws {
         let (defaults, suite) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
