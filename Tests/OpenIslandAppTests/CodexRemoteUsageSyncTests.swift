@@ -41,6 +41,79 @@ struct CodexRemoteUsageSyncTests {
     }
 
     @Test
+    func sessionMetadataOwnsRenamedAndSplitLogIdentity() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let original = "01a17795-9d40-74f3-8444-fe00bf19bcc3"
+        let child = "01a17bf8-95c8-71e1-be24-297427a99ed4"
+        let prefix = """
+        {"type":"session_meta","payload":{"id":"\(original)"}}
+        {"type":"event_msg","timestamp":"2026-11-01T23:59:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":100},"last_token_usage":{"total_tokens":100}}}}
+        """ + "\n"
+        let suffix = """
+        {"type":"session_meta","payload":{"id":"\(original)"}}
+        {"type":"event_msg","timestamp":"2026-11-02T00:02:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":140},"last_token_usage":{"total_tokens":40}}}}
+        """ + "\n"
+        try Data(prefix.utf8).write(to: directory.appendingPathComponent("rollout-\(original).jsonl"))
+        try Data(suffix.utf8).write(to: directory.appendingPathComponent("rollout-\(original)_\(child).jsonl"))
+        let value = try #require(JSONSerialization.jsonObject(with: try await runExporter(root: root)) as? [String: Any])
+        let threads = try #require(value["threads"] as? [[String: Any]])
+        #expect(threads.count == 1)
+        #expect(threads[0]["threadID"] as? String == original)
+        #expect(threads[0]["totalTokens"] as? Int == 140)
+        #expect((threads[0]["records"] as? [[String: Any]])?.count == 2)
+    }
+
+    @Test(.enabled(if: zstdToolURL != nil))
+    func compressedOriginalAndSplitLogMergeWithoutLosingHistoricalTimestamps() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("sessions")
+        let archived = root.appendingPathComponent("archived_sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: archived, withIntermediateDirectories: true)
+        let original = "01a17795-9d40-74f3-8444-fe00bf19bcc3"
+        let child = "01a17bf8-95c8-71e1-be24-297427a99ed4"
+        let prefix = """
+        {"type":"session_meta","payload":{"id":"\(original)"}}
+        {"type":"response_item","payload":{"body":"compressed private prompt"}}
+        {"type":"event_msg","timestamp":"2026-11-01T23:59:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":100},"last_token_usage":{"total_tokens":100}}}}
+        """ + "\n"
+        let suffix = """
+        {"type":"session_meta","payload":{"id":"\(original)"}}
+        {"type":"event_msg","timestamp":"2026-11-02T00:02:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":140},"last_token_usage":{"total_tokens":40}}}}
+        """ + "\n"
+        let compressed = try await RemoteUsageCommand.run(executable: try #require(Self.zstdToolURL), arguments: ["-q", "-c"], input: Data(prefix.utf8), timeout: 10, maximumOutputBytes: 1_048_576)
+        try compressed.write(to: directory.appendingPathComponent("rollout-\(original).jsonl.zst"))
+        try Data(prefix.utf8).write(to: archived.appendingPathComponent("rollout-\(original).jsonl"))
+        try Data(suffix.utf8).write(to: directory.appendingPathComponent("rollout-\(original)_\(child).jsonl"))
+        let output = try await runExporter(root: root)
+        #expect(!String(decoding: output, as: UTF8.self).contains("compressed private prompt"))
+        let value = try #require(JSONSerialization.jsonObject(with: output) as? [String: Any])
+        let threads = try #require(value["threads"] as? [[String: Any]])
+        #expect(threads.count == 1)
+        #expect(threads[0]["threadID"] as? String == original)
+        #expect(threads[0]["totalTokens"] as? Int == 140)
+        let records = try #require(threads[0]["records"] as? [[String: Any]])
+        #expect(records.count == 2)
+        #expect(records[0]["timestamp"] as? Double == ISO8601DateFormatter().date(from: "2026-11-01T23:59:00Z")?.timeIntervalSince1970)
+        #expect(value["inspectedFiles"] as? Int == 3)
+    }
+
+    @Test
+    func corruptCompressedLogCannotReplaceRetainedHistory() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("sessions")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not a zstd frame".utf8).write(to: directory.appendingPathComponent("rollout-01a17795-9d40-74f3-8444-fe00bf19bcc3.jsonl.zst"))
+        do { _ = try await runExporter(root: root); Issue.record("Corrupt compressed log was accepted") }
+        catch { #expect(error is CodexRemoteUsageSyncError) }
+    }
+
+    @Test
     func exporterRetainsInitialGapAndIgnoresOnlyAnUnfinishedFinalAppend() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -191,6 +264,13 @@ struct CodexRemoteUsageSyncTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("codex-usage-sync-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+
+    private static var zstdToolURL: URL? {
+        let entries = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":")
+        let candidates = entries.map { URL(fileURLWithPath: String($0)).appendingPathComponent("zstd") }
+            + [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("miniconda3/bin/zstd")]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
     private func runExporter(root: URL) async throws -> Data {

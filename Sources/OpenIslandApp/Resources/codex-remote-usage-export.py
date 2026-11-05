@@ -1,14 +1,56 @@
 #!/usr/bin/env python3
 """Export usage metadata only; never send conversation content over SSH."""
 import argparse
+from contextlib import contextmanager
 import datetime
+import importlib
 import json
 import math
 import os
 from pathlib import Path
+import re
+import shutil
+import subprocess
 import sys
 import time
 import uuid
+
+
+UUID_IN_NAME = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+TOP_LEVEL_TYPE = re.compile(rb'^\s*\{\s*(?:"timestamp"\s*:\s*"[^"]*"\s*,\s*)?"type"\s*:\s*"([^"]+)"')
+TOKEN_EVENT = re.compile(rb'"type"\s*:\s*"token_count"')
+
+
+@contextmanager
+def open_rollout(path):
+    if not path.name.endswith(".zst"):
+        with path.open("rb") as stream:
+            yield stream
+        return
+    for module_name in ("compression.zstd", "zstandard"):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        with module.open(path, "rb") as stream:
+            yield stream
+        return
+    # SSH's noninteractive PATH often excludes Conda or Homebrew, even when
+    # those installations provide the host's normal archive tools.
+    candidates = [shutil.which("zstd"), str(Path(sys.executable).resolve().parent / "zstd")]
+    candidates += [str(Path.home() / name / "bin/zstd") for name in ("miniconda3", "anaconda3", "miniforge3", "mambaforge")]
+    candidates += ["/opt/homebrew/bin/zstd", "/usr/local/bin/zstd"]
+    tool = next((candidate for candidate in candidates if candidate and os.access(candidate, os.X_OK)), None)
+    if tool is None:
+        raise ValueError("Compressed token logs require zstd on the remote host")
+    process = subprocess.Popen([tool, "-dc", "--", str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        yield process.stdout
+    finally:
+        process.stdout.close()
+        status = process.wait()
+    if status != 0:
+        raise ValueError("A compressed remote token log could not be read completely")
 
 
 def timestamp(value):
@@ -49,18 +91,26 @@ def export_archive(root, host_id, now=None):
         directory = root / name
         if not directory.exists():
             continue
-        for path in sorted(directory.rglob("rollout-*.jsonl")):
+        for path in sorted(directory.rglob("rollout-*")):
+            if not path.is_file() or not path.name.endswith((".jsonl", ".jsonl.zst")):
+                continue
             if path.stat().st_mtime < cutoff:
                 continue
-            thread_id = path.stem[-36:]
-            try:
-                thread_id = str(uuid.UUID(thread_id))
-            except ValueError:
-                continue
+            match = UUID_IN_NAME.search(path.name)
+            thread_id = str(uuid.UUID(match.group())) if match else None
+            declared_id = None
+            checkpoints = {}
             files += 1
             previous = 0
-            with path.open("rb") as stream:
+            with open_rollout(path) as stream:
                 for raw in stream:
+                    # Most bytes are response bodies. Recognized non-usage
+                    # events need not be JSON-decoded or retained in memory.
+                    kind = TOP_LEVEL_TYPE.match(raw)
+                    if kind and kind.group(1) not in (b"session_meta", b"event_msg"):
+                        continue
+                    if kind and kind.group(1) == b"event_msg" and not TOKEN_EVENT.search(raw):
+                        continue
                     try:
                         item = json.loads(raw)
                     except (ValueError, UnicodeDecodeError):
@@ -70,6 +120,12 @@ def export_archive(root, host_id, now=None):
                             continue
                         raise ValueError("A completed remote log line is invalid")
                     payload = item.get("payload")
+                    if item.get("type") == "session_meta":
+                        value = str(uuid.UUID(payload["id"]))
+                        if declared_id is not None and declared_id != value:
+                            raise ValueError("A log contains conflicting session identities")
+                        declared_id = value
+                        continue
                     if item.get("type") != "event_msg" or not isinstance(payload, dict) or payload.get("type") != "token_count":
                         continue
                     info = payload.get("info")
@@ -92,14 +148,25 @@ def export_archive(root, host_id, now=None):
                     if last is not None:
                         record["lastTokens"] = last
                     events += 1
-                    thread = threads.setdefault(thread_id, {})
-                    existing = thread.get(total)
+                    existing = checkpoints.get(total)
                     if existing is not None:
                         duplicates += 1
                     # Snapshots with an unchanged counter and archive copies refer
                     # to the same checkpoint. Keep its original event timestamp.
                     if existing is None or record["timestamp"] < existing["timestamp"]:
-                        thread[total] = record
+                        checkpoints[total] = record
+            thread_id = declared_id or thread_id
+            if thread_id is None:
+                if checkpoints:
+                    raise ValueError("A token log has no valid session identity")
+                continue
+            thread = threads.setdefault(thread_id, {})
+            for total, record in checkpoints.items():
+                existing = thread.get(total)
+                if existing is not None:
+                    duplicates += 1
+                if existing is None or record["timestamp"] < existing["timestamp"]:
+                    thread[total] = record
     return {
         "version": 1,
         "complete": True,
@@ -127,7 +194,7 @@ def main():
     root = Path(args.codex_home or os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")).expanduser()
     try:
         result = export_archive(root, args.host_id)
-    except (ValueError, OSError, TypeError, AttributeError):
+    except Exception:
         # Do not leak a malformed log's body or any authentication material.
         print("Remote token logs could not be exported completely.", file=sys.stderr)
         return 1
