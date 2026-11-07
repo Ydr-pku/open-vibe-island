@@ -966,9 +966,12 @@ final class HookInstallationCoordinator {
             guard let self else { return }
             defer { self.codexAccountUsageRefreshTask = nil }
 
-            if let snapshot = try? await codexAccountUsageProvider() {
+            do {
+                let snapshot = try await codexAccountUsageProvider()
                 self.codexAccountUsageSnapshot = snapshot
                 self.onCodexUsageHistoryUpdated?()
+            } catch {
+                self.onStatusMessage?("Failed to read Codex account usage: \(error.localizedDescription)")
             }
         }
     }

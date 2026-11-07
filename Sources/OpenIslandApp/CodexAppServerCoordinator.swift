@@ -17,6 +17,18 @@ final class CodexAppServerCoordinator {
     @ObservationIgnored
     private var connectTask: Task<Void, Never>?
 
+    @ObservationIgnored
+    private let resolveExecutable: () -> URL?
+
+    init(resolveExecutable: @escaping () -> URL? = {
+        guard let bundleURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") else {
+            return nil
+        }
+        return CodexAppServerCoordinator.bundledCodexExecutable(in: bundleURL)
+    }) {
+        self.resolveExecutable = resolveExecutable
+    }
+
     /// Callback to emit AgentEvents into AppModel.
     @ObservationIgnored
     var onEvent: ((AgentEvent) -> Void)?
@@ -48,12 +60,7 @@ final class CodexAppServerCoordinator {
 
         // Resolve the Codex.app bundle location dynamically — users may
         // have installed Codex outside `/Applications` (e.g. ~/Applications).
-        guard let bundleURL = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: "com.openai.codex"
-        ) else {
-            return
-        }
-        guard let codexURL = Self.bundledCodexExecutable(in: bundleURL) else {
+        guard let codexURL = resolveExecutable() else {
             onStatusMessage?("Could not find the bundled Codex app-server executable.")
             return
         }
@@ -110,10 +117,19 @@ final class CodexAppServerCoordinator {
     }
 
     func readAccountUsageSnapshot() async throws -> CodexAccountUsageSnapshot {
-        guard let client, isConnected else {
+        if let client, isConnected {
+            return try await client.readAccountUsage()
+        }
+        // Account history is available even when the desktop UI is closed.
+        // This short-lived reader must not mark the desktop as connected or
+        // discover threads and emit desktop-session events.
+        guard let executable = resolveExecutable() else {
             throw CodexAppServerError.notConnected
         }
-        return try await client.readAccountUsage()
+        let reader = CodexAppServerClient(codexPath: executable.path)
+        defer { reader.stop() }
+        try await reader.start()
+        return try await reader.readAccountUsage()
     }
 
     /// Disconnect and clean up.  Called when Codex.app is no longer running.
