@@ -235,6 +235,26 @@
 "window.settings" = "Open Island Settings";
 
 /* NPU monitor */
+/* SSH CPU monitor */
+"ssh.monitor.title" = "SSH · Server monitor";
+"cpu.title" = "CPU monitor";
+"cpu.npuTab" = "Ascend NPU";
+"cpu.connection.help" = "Select multiple servers · click again to stop";
+"cpu.selected" = "Selected";
+"cpu.unselected" = "Not selected";
+"cpu.scope.help" = "Windows servers show WSL CPU usage. Monitoring continues after closing this window.";
+"cpu.chooseServer" = "Connect with existing SSH keys. View live CPU usage in the expanded island.";
+"cpu.logicalCores" = "%d logical cores";
+"cpu.total" = "Total";
+"cpu.live" = "Live · 8 cores per row";
+"cpu.stale" = "Sample expired · waiting for an update";
+"cpu.connecting" = "Connecting and collecting the first CPU sample…";
+"cpu.retrying" = "Reconnecting…";
+"cpu.retry" = "Retry";
+"cpu.error.sample" = "The CPU sample is incomplete or invalid. Reconnect to retry.";
+"cpu.error.collector" = "The CPU collector is missing from this app.";
+"cpu.error.timeout" = "CPU sampling timed out. Retrying the SSH connection.";
+
 "npu.connection.title" = "NPU · SSH connection";
 "npu.compact.help" = "NPU HBM used / average AI Core utilization";
 "npu.processes.title" = "NPU processes · chip / PID / name / memory";

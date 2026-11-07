@@ -226,13 +226,22 @@ def main() -> None:
             fail(f"expected opened notch for sessionList, got {notch_status!r}")
         if island_surface != "sessionList":
             fail(f"expected sessionList surface, got {island_surface!r}")
+        cpu_content_height = report.get("cpuMonitorContentHeight", 0)
+        if not isinstance(cpu_content_height, (int, float)) or not 0 <= cpu_content_height <= 1000:
+            fail("CPU monitor content height is invalid")
         require_frame_between(
             overlay_frame,
             width=(520, 780),
-            height=(100, 260),
+            height=(100, 260 + cpu_content_height),
             context="sessionList overlay frame",
         )
         static_text = labels | text_values | button_labels
+        for alias, count in (report.get("cpuMonitorCoreCounts") or {}).items():
+            if not isinstance(count, int) or not 1 <= count <= 4096:
+                fail(f"CPU core count for {alias} is invalid")
+            assert_contains_any(static_text, [f"CPU · {alias}"], f"CPU panel for {alias}")
+            for core in range(min(count, 56)):
+                assert_contains_any(labels, [f"CPU {core}:"], f"CPU core {core} for {alias}")
         for row_text in (
             "Reading IslandPanelView.swift and AppModel.swift",
             "Expand session detail",

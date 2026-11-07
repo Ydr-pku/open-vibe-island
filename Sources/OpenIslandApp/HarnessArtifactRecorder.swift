@@ -89,6 +89,8 @@ struct HarnessArtifactReport: Codable {
     let selectedSessionID: String?
     let islandSurface: String
     let notchStatus: String
+    let cpuMonitorCoreCounts: [String: Int]
+    let cpuMonitorContentHeight: Double
     let runtime: HarnessRuntimeArtifacts?
     let sessions: [SessionSnapshot]
 }
@@ -165,6 +167,10 @@ enum HarnessArtifactRecorder {
             selectedSessionID: model.selectedSessionID,
             islandSurface: surfaceDescription(model.islandSurface),
             notchStatus: notchStatusDescription(model.notchStatus),
+            cpuMonitorCoreCounts: Dictionary(uniqueKeysWithValues: model.cpuMonitor.monitoredHosts.compactMap { host in
+                host.snapshot.map { (host.id, $0.cores.count) }
+            }),
+            cpuMonitorContentHeight: Double(CPUGridLayout.panelHeight(for: model.cpuMonitor)),
             runtime: runtimeArtifacts,
             sessions: model.sessions.map {
                 HarnessArtifactReport.SessionSnapshot(

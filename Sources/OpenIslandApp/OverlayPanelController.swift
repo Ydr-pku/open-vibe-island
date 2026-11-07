@@ -517,8 +517,12 @@ final class OverlayPanelController {
         if !isNotificationMode {
             let hintHeight: CGFloat = !model.hasAnyInstalledAgent
                 && !(model.showCodexUsage && model.hasCodexUsageHistory) ? 60 : 0
+            let cpuHeight = CPUGridLayout.panelHeight(for: model.cpuMonitor)
+            let showNPU = model.cpuMonitor.selectedHost == nil
+                || model.npuMonitor.state == .connected || model.npuMonitor.state == .connecting
+            let npuHeight = showNPU ? NPUIslandPresentation.contentHeight(for: model.npuMonitor) : 0
             return max(Self.openedEmptyStateHeight,
-                       hintHeight + usageHistoryHeight + 8 + NPUIslandPresentation.contentHeight(for: model.npuMonitor))
+                       hintHeight + usageHistoryHeight + 8 + cpuHeight + npuHeight + (cpuHeight > 0 && npuHeight > 0 ? 8 : 0))
         }
 
         // Use SwiftUI-measured height when available (accurate after first render).

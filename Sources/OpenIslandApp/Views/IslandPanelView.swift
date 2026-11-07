@@ -102,11 +102,13 @@ struct IslandPanelView: View {
 
     var model: AppModel
     @ObservedObject private var npuMonitor: MonitorStore
+    @ObservedObject private var cpuMonitor: CPUMonitorStore
     private var lang: LanguageManager { model.lang }
 
     init(model: AppModel) {
         self.model = model
         _npuMonitor = ObservedObject(wrappedValue: model.npuMonitor)
+        _cpuMonitor = ObservedObject(wrappedValue: model.cpuMonitor)
     }
 
     @State private var isHovering = false
@@ -190,6 +192,15 @@ struct IslandPanelView: View {
             syncOpenedSurfaceMount(with: status)
         }
         .onChange(of: NPUIslandPresentation.contentHeight(for: npuMonitor)) { _, _ in
+            model.refreshOverlayPlacement()
+        }
+        .onChange(of: npuMonitor.state) { _, _ in
+            model.refreshOverlayPlacement()
+        }
+        .onChange(of: CPUGridLayout.panelHeight(for: cpuMonitor)) { _, _ in
+            model.refreshOverlayPlacement()
+        }
+        .onChange(of: cpuMonitor.selectedID) { _, _ in
             model.refreshOverlayPlacement()
         }
     }
@@ -371,14 +382,14 @@ struct IslandPanelView: View {
         Button {
             model.showNPUConnection()
         } label: {
-            Text(npuMonitor.state == .connected ? "NPU" : "SSH")
+            Text(cpuMonitor.selectedHost != nil ? "CPU" : (npuMonitor.state == .connected ? "NPU" : "SSH"))
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(npuMonitor.state == .connected ? .cyan : .white.opacity(0.7))
+                .foregroundStyle(cpuMonitor.selectedHost != nil || npuMonitor.state == .connected ? .cyan : .white.opacity(0.7))
                 .frame(width: IslandChromeMetrics.npuHeaderButtonWidth, height: Self.headerControlButtonSize)
                 .background(.white.opacity(0.08), in: Capsule())
         }
         .buttonStyle(.plain)
-        .help(lang.t("npu.connection.title"))
+        .help(lang.t("ssh.monitor.title"))
     }
 
     private var openedContent: some View {
@@ -402,8 +413,14 @@ struct IslandPanelView: View {
             if isNotificationMode {
                 notificationSession
             } else {
-                NPUProcessPanel(monitor: npuMonitor, onConnect: model.showNPUConnection)
-                    .padding(.horizontal, sessionListSideInset)
+                if cpuMonitor.selectedHost != nil {
+                    CPUUsagePanels(monitor: cpuMonitor)
+                        .padding(.horizontal, sessionListSideInset)
+                }
+                if cpuMonitor.selectedHost == nil || npuMonitor.state == .connected || npuMonitor.state == .connecting {
+                    NPUProcessPanel(monitor: npuMonitor, onConnect: model.showNPUConnection)
+                        .padding(.horizontal, sessionListSideInset)
+                }
             }
 
         }

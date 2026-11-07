@@ -234,6 +234,26 @@
 "window.settings" = "Open Island 設定";
 
 /* NPU monitor */
+/* SSH CPU monitor */
+"ssh.monitor.title" = "SSH · 伺服器監控";
+"cpu.title" = "CPU 監控";
+"cpu.npuTab" = "昇騰 NPU";
+"cpu.connection.help" = "可多選 · 再次點選取消監控";
+"cpu.selected" = "已選擇";
+"cpu.unselected" = "未選擇";
+"cpu.scope.help" = "Windows 伺服器採集 WSL 的 CPU 使用率。關閉視窗後仍會繼續監控。";
+"cpu.chooseServer" = "使用現有 SSH 金鑰連線，在展開的島上查看即時 CPU 使用率。";
+"cpu.logicalCores" = "%d 個邏輯核心";
+"cpu.total" = "總使用率";
+"cpu.live" = "即時 · 每行 8 核";
+"cpu.stale" = "資料已過期 · 等待更新";
+"cpu.connecting" = "正在連線，等待首次 CPU 採樣…";
+"cpu.retrying" = "正在重新連線…";
+"cpu.retry" = "重試";
+"cpu.error.sample" = "CPU 採樣不完整或無效，請重新連線。";
+"cpu.error.collector" = "應用程式中缺少 CPU 採集腳本。";
+"cpu.error.timeout" = "CPU 採樣逾時，正在重試 SSH 連線。";
+
 "npu.connection.title" = "NPU · SSH 連線";
 "npu.compact.help" = "NPU HBM 已用百分比 / 平均 AI Core 使用率";
 "npu.processes.title" = "NPU 程序 · 晶片 / PID / 名稱 / 記憶體";

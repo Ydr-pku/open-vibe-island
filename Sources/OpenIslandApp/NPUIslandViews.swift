@@ -195,19 +195,20 @@ struct NPUProcessPanel: View {
 final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate {
     private let monitor: MonitorStore
 
-    init(monitor: MonitorStore) {
+    init(monitor: MonitorStore, cpuMonitor: CPUMonitorStore) {
         self.monitor = monitor
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 330),
-            styleMask: [.titled, .closable], backing: .buffered, defer: false
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false
         )
-        window.title = LanguageManager.shared.t("npu.connection.title")
+        window.title = LanguageManager.shared.t("ssh.monitor.title")
+        window.minSize = NSSize(width: 620, height: 360)
         window.identifier = NSUserInterfaceItemIdentifier("OpenIsland.NPUConnection")
         window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
-        window.contentView = NSHostingView(rootView: NPUConnectionView(monitor: monitor))
+        window.contentView = NSHostingView(rootView: SSHMonitorConnectionView(monitor: monitor, cpuMonitor: cpuMonitor))
         window.center()
     }
 
@@ -222,6 +223,35 @@ final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate 
     func windowWillClose(_ notification: Notification) {
         monitor.password = ""
         if monitor.state == .connecting { monitor.disconnect() }
+    }
+}
+
+private struct SSHMonitorConnectionView: View {
+    @ObservedObject var monitor: MonitorStore
+    @ObservedObject var cpuMonitor: CPUMonitorStore
+    @State private var showsCPU = true
+    private var lang: LanguageManager { .shared }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(lang.t("ssh.monitor.title")).font(.title3.weight(.semibold))
+            Picker(lang.t("ssh.monitor.title"), selection: $showsCPU) {
+                Text(lang.t("cpu.title")).tag(true)
+                Text(lang.t("cpu.npuTab")).tag(false)
+            }.pickerStyle(.segmented).labelsHidden()
+            ScrollView {
+                if showsCPU {
+                    CPUConnectionView(monitor: cpuMonitor)
+                } else {
+                    NPUConnectionView(monitor: monitor)
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .preferredColorScheme(.dark)
+        .onAppear { showsCPU = cpuMonitor.selectedID != nil || monitor.state == .disconnected }
     }
 }
 
@@ -276,8 +306,7 @@ private struct NPUConnectionView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(24)
-        .frame(width: 460, height: 330)
+        .frame(maxWidth: .infinity, minHeight: 282, alignment: .topLeading)
         .preferredColorScheme(.dark)
         .onAppear { focusedField = monitor.connectionInput.isEmpty ? .address : .password }
         .sheet(item: $monitor.hostTrustRequest) { request in

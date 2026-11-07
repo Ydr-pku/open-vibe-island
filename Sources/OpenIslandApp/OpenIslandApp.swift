@@ -35,6 +35,11 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
                 if ProcessInfo.processInfo.environment["OPEN_ISLAND_HARNESS_NPU_DEMO"] == "1" {
                     model.npuMonitor.loadDemo()
                 }
+                let cpuAliases = ProcessInfo.processInfo.environment["OPEN_ISLAND_HARNESS_CPU_SERVERS"]?
+                    .split(separator: ",").map(String.init) ?? []
+                for alias in cpuAliases where CPUCollector.aliases.contains(alias) {
+                    model.cpuMonitor.connect(alias)
+                }
                 model.loadDebugSnapshot(
                     scenario.snapshot(),
                     presentOverlay: harnessLaunchConfiguration.presentOverlay
@@ -85,6 +90,7 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         model.npuMonitor.disconnect()
+        model.cpuMonitor.shutdown()
     }
 
     private static func hideAllAppWindows() {
