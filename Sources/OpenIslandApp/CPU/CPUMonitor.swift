@@ -96,20 +96,46 @@ struct CPUHostState: Identifiable, Sendable {
 @MainActor
 final class CPUMonitorStore: ObservableObject {
     typealias Sampler = @Sendable (String) async throws -> CPUSnapshot
+    static let savedAliasesKey = "cpuMonitor.enabledAliases"
+    static let savedIntervalKey = "cpuMonitor.refreshInterval"
+    static let supportedIntervals: [Double] = [1, 2, 3, 5, 10]
     @Published private(set) var hosts = CPUCollector.aliases.map { CPUHostState(id: $0) }
     @Published private(set) var selectedID: String?
-    @Published var refreshInterval: Double = 2
+    @Published var refreshInterval: Double = 2 {
+        didSet {
+            if Self.supportedIntervals.contains(refreshInterval) {
+                defaults?.set(refreshInterval, forKey: Self.savedIntervalKey)
+            }
+        }
+    }
 
     private let sampler: Sampler
+    private let defaults: UserDefaults?
+    private var enabledAliases: Set<String>
     private var tasks: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
 
-    init(sampler: @escaping Sampler = { try await CPUCollector.sample(alias: $0) }) {
+    init(defaults: UserDefaults? = nil,
+         sampler: @escaping Sampler = { try await CPUCollector.sample(alias: $0) }) {
+        self.defaults = defaults
         self.sampler = sampler
+        enabledAliases = Set(defaults?.stringArray(forKey: Self.savedAliasesKey) ?? [])
+            .intersection(CPUCollector.aliases)
+        if let interval = defaults?.double(forKey: Self.savedIntervalKey),
+           Self.supportedIntervals.contains(interval) {
+            refreshInterval = interval
+        }
     }
 
     var selectedHost: CPUHostState? { hosts.first { $0.id == selectedID } }
     var monitoredHosts: [CPUHostState] { hosts.filter { $0.state != .disconnected } }
+
+    /// Called for normal app startup, never by previews or the UI harness.
+    func resumeSavedConnections() {
+        for alias in CPUCollector.aliases where enabledAliases.contains(alias) {
+            connect(alias)
+        }
+    }
 
     func toggle(_ alias: String) {
         if hosts.first(where: { $0.id == alias })?.state == .disconnected {
@@ -121,6 +147,8 @@ final class CPUMonitorStore: ObservableObject {
 
     func connect(_ alias: String) {
         guard let index = hosts.firstIndex(where: { $0.id == alias }) else { return }
+        enabledAliases.insert(alias)
+        saveSelection()
         selectedID = alias
         guard tasks[alias] == nil else { return }
         hosts[index].state = .connecting
@@ -170,6 +198,16 @@ final class CPUMonitorStore: ObservableObject {
     }
 
     func disconnect(_ alias: String) {
+        enabledAliases.remove(alias)
+        saveSelection()
+        stopConnection(alias)
+    }
+
+    private func saveSelection() {
+        defaults?.set(CPUCollector.aliases.filter { enabledAliases.contains($0) }, forKey: Self.savedAliasesKey)
+    }
+
+    private func stopConnection(_ alias: String) {
         generations[alias] = nil
         tasks.removeValue(forKey: alias)?.cancel()
         if let index = hosts.firstIndex(where: { $0.id == alias }) {
@@ -183,7 +221,9 @@ final class CPUMonitorStore: ObservableObject {
     }
 
     func shutdown() {
-        for alias in CPUCollector.aliases { disconnect(alias) }
+        // Quitting stops processes without changing which servers the user
+        // wants to monitor on the next launch.
+        for alias in CPUCollector.aliases { stopConnection(alias) }
     }
 }
 

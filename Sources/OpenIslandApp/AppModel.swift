@@ -69,7 +69,7 @@ final class AppModel {
     let codexAppServer = CodexAppServerCoordinator()
     let updateChecker = UpdateChecker()
     let npuMonitor = MonitorStore()
-    let cpuMonitor = CPUMonitorStore()
+    let cpuMonitor = CPUMonitorStore(defaults: .standard)
     @ObservationIgnored private lazy var npuConnectionWindow = NPUConnectionWindowController(monitor: npuMonitor, cpuMonitor: cpuMonitor)
 
     func showNPUConnection() {
@@ -1181,6 +1181,7 @@ final class AppModel {
 
         if loadRuntimeState {
             isResolvingInitialLiveSessions = true
+            cpuMonitor.resumeSavedConnections()
 
             Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self else { return }
