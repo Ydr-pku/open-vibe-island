@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // MARK: - Protocol models
@@ -141,6 +142,9 @@ public final class CodexAppServerClient: @unchecked Sendable {
 
     private let codexPath: String
     private var process: Process?
+    private let connectionLock = NSLock()
+    private var connectionGeneration = UUID()
+    private var transportHandles: [FileHandle] = []
     /// Internal access so tests can inject a discard `Pipe` and drive
     /// the request path without launching a real codex subprocess.
     var stdin: FileHandle?
@@ -166,14 +170,17 @@ public final class CodexAppServerClient: @unchecked Sendable {
     }
 
     public var isRunning: Bool {
-        process?.isRunning == true
+        connectionLock.withLock { process?.isRunning == true }
     }
+
+    deinit { stop() }
 
     // MARK: - Lifecycle
 
     /// Launch the app-server subprocess and perform the `initialize` handshake.
     public func start() async throws {
         guard !isRunning else { return }
+        stop()
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: codexPath)
@@ -186,42 +193,112 @@ public final class CodexAppServerClient: @unchecked Sendable {
         proc.standardOutput = stdoutPipe
         proc.standardError = stderrPipe
 
-        self.stdin = stdinPipe.fileHandleForWriting
-        self.process = proc
+        let generation = UUID()
+        let outputDescriptor = stdoutPipe.fileHandleForReading.fileDescriptor
+        let errorDescriptor = stderrPipe.fileHandleForReading.fileDescriptor
+        connectionLock.withLock {
+            self.connectionGeneration = generation
+            self.stdin = stdinPipe.fileHandleForWriting
+            self.process = proc
+            self.transportHandles = [
+                stdinPipe.fileHandleForReading, stdinPipe.fileHandleForWriting,
+                stdoutPipe.fileHandleForReading, stdoutPipe.fileHandleForWriting,
+                stderrPipe.fileHandleForReading, stderrPipe.fileHandleForWriting,
+            ]
+        }
 
         // Read stdout in a background thread.
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            self?.handleIncomingData(data)
+            guard let self else { Self.closeTransportHandle(handle); return }
+            switch self.readTransportChunk(descriptor: outputDescriptor, generation: generation) {
+            case .data(let data):
+                self.handleIncomingData(data)
+            case .closed:
+                self.stop(ifGeneration: generation)
+            case .retry:
+                break
+            }
         }
 
         // Drain stderr so a full pipe can't block the child process.
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            _ = handle.availableData
-        }
-
-        try proc.run()
-
-        // Send initialize request.
-        struct InitializeParams: Encodable {
-            struct ClientInfo: Encodable {
-                let name: String
-                let version: String
+        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            guard let self else { Self.closeTransportHandle(handle); return }
+            if case .closed = self.readTransportChunk(descriptor: errorDescriptor, generation: generation) {
+                Self.closeTransportHandle(handle)
             }
-            let clientInfo: ClientInfo
         }
-        _ = try await sendRequest(
-            method: "initialize",
-            params: InitializeParams(clientInfo: .init(name: "OpenIsland", version: "1.0.0"))
-        )
+
+        do {
+            // Serialize launch against stop so a cancelled connection cannot
+            // start an unowned child after its handles have been released.
+            try connectionLock.withLock {
+                guard connectionGeneration == generation else { throw CodexAppServerError.disconnected }
+                for descriptor in [outputDescriptor, errorDescriptor] {
+                    let flags = fcntl(descriptor, F_GETFL)
+                    guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+                        throw CodexAppServerError.disconnected
+                    }
+                }
+                try proc.run()
+            }
+
+            struct InitializeParams: Encodable {
+                struct ClientInfo: Encodable {
+                    let name: String
+                    let version: String
+                }
+                let clientInfo: ClientInfo
+            }
+            _ = try await sendRequest(
+                method: "initialize",
+                params: InitializeParams(clientInfo: .init(name: "OpenIsland", version: "1.0.0"))
+            )
+        } catch {
+            stop(ifGeneration: generation)
+            throw error
+        }
     }
 
     /// Stop the app-server subprocess.
     public func stop() {
-        process?.terminate()
-        process = nil
-        stdin = nil
+        stop(ifGeneration: nil)
+    }
+
+    private static func closeTransportHandle(_ handle: FileHandle) {
+        // EOF stays readable forever. Leaving a handler attached spins the
+        // dispatch worker pool and retains the descriptor even after exit.
+        handle.readabilityHandler = nil
+        try? handle.close()
+    }
+
+    private enum TransportChunk {
+        case data(Data), retry, closed
+    }
+
+    private func readTransportChunk(descriptor: Int32, generation: UUID) -> TransportChunk {
+        connectionLock.withLock {
+            guard connectionGeneration == generation else { return .retry }
+            var buffer = [UInt8](repeating: 0, count: 65_536)
+            let count = buffer.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
+            if count > 0 { return .data(Data(buffer.prefix(count))) }
+            if count < 0, errno == EINTR || errno == EAGAIN { return .retry }
+            return .closed
+        }
+    }
+
+    private func stop(ifGeneration expected: UUID?) {
+        let transport: (Process?, [FileHandle])? = connectionLock.withLock {
+            if let expected, connectionGeneration != expected { return nil }
+            connectionGeneration = UUID()
+            let transport = (process, transportHandles)
+            process = nil
+            stdin = nil
+            transportHandles = []
+            return transport
+        }
+        guard let (process, handles) = transport else { return }
+        for handle in handles { Self.closeTransportHandle(handle) }
+        if let process, process.isRunning { process.terminate() }
         lock.lock()
         let pending = pendingRequests
         pendingRequests.removeAll()
@@ -372,7 +449,8 @@ public final class CodexAppServerClient: @unchecked Sendable {
             lock.lock()
             pendingRequests[requestID] = continuation
             lock.unlock()
-            stdin.write(line)
+            do { try stdin.write(contentsOf: line) }
+            catch { failPendingRequest(id: requestID, with: .disconnected) }
         }
     }
 
