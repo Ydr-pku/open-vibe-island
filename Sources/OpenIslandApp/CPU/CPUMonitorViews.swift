@@ -57,6 +57,8 @@ struct CPUUsagePanel: View {
                         Image(systemName: "cpu").foregroundStyle(.cyan)
                         Text("CPU · \(host.id)").fontWeight(.semibold)
                         Spacer(minLength: 0)
+                        CPUFanIndicators(host: host, date: context.date)
+                        Spacer(minLength: 0)
                         if let sample = host.snapshot {
                             Text(lang.t("cpu.total")).foregroundStyle(.secondary)
                             Text(NPUIslandPresentation.percentage(fresh ? sample.totalUsage : nil))
@@ -117,6 +119,67 @@ struct CPUUsagePanel: View {
                 .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.06)) }
             }
         }
+    }
+}
+
+private struct CPUFanIndicators: View {
+    let host: CPUHostState
+    let date: Date
+    private var lang: LanguageManager { .shared }
+    private var fresh: Bool { host.fansAreFresh(at: date) }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "fanblades").foregroundStyle(.secondary)
+            if let fans = host.fanSnapshot?.fans, !fans.isEmpty {
+                ForEach(fans) { fan in
+                    HStack(spacing: 3) {
+                        if fresh, let rpm = fan.rpm {
+                            Text("\(Int(rpm.rounded())) RPM")
+                            if let percentage = fan.percentage {
+                                Text("\(Int(percentage.rounded()))%")
+                                    .fontWeight(.semibold)
+                            }
+                        } else {
+                            Text("—")
+                        }
+                    }
+                    .foregroundStyle(color(fan))
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(color(fan).opacity(0.10), in: Capsule())
+                    .help(detail(fan))
+                    .accessibilityLabel(detail(fan))
+                }
+            } else {
+                Text("—").foregroundStyle(.secondary)
+                    .help(placeholderHelp)
+                    .accessibilityLabel(placeholderHelp)
+            }
+        }
+        .font(.system(size: 8, design: .monospaced))
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("cpu.fans.\(host.id)")
+    }
+
+    private var placeholderHelp: String {
+        if !FanCollector.supports(host.id) { return lang.t("fan.unsupported") }
+        if let error = host.fanError { return error }
+        return lang.t(host.fanSnapshot == nil ? "fan.waiting" : "fan.unavailable")
+    }
+
+    private func color(_ fan: FanReading) -> Color {
+        guard fresh, let band = fan.speedBand else { return .secondary }
+        return band == 2 ? .orange : (band == 1 ? .yellow : .cyan)
+    }
+
+    private func detail(_ fan: FanReading) -> String {
+        guard fresh else { return host.fanError ?? lang.t("fan.stale") }
+        guard let rpm = fan.rpm else { return "\(fan.name) · \(lang.t("fan.unavailable"))" }
+        if let maximum = fan.maximumRPM, let percentage = fan.percentage {
+            return lang.t("fan.maximum.detail", fan.name, rpm, maximum, percentage)
+        }
+        return lang.t("fan.rpm.detail", fan.name, rpm)
     }
 }
 

@@ -45,12 +45,12 @@ enum CPUCollectionError: LocalizedError {
 enum CPUCollector {
     static let aliases = ["macserver", "winserver", "winserver2055"]
 
-    static func arguments(for alias: String) -> [String] {
+    static func arguments(for alias: String, command: String = "python3 -") -> [String] {
         ["-T", "-o", "BatchMode=yes", "-o", "PasswordAuthentication=no",
          "-o", "KbdInteractiveAuthentication=no", "-o", "ConnectTimeout=8",
          "-o", "ConnectionAttempts=1", "-o", "StrictHostKeyChecking=yes",
          "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=1",
-         "--", alias, "python3 -"]
+         "--", alias, command]
     }
 
     static func sample(alias: String) async throws -> CPUSnapshot {
@@ -84,6 +84,14 @@ struct CPUHostState: Identifiable, Sendable {
     var errorMessage: String?
     var history: [Double] = []
     var isRetrying = false
+    var fanSnapshot: FanSnapshot?
+    var fansUpdated: Date?
+    var fanError: String?
+
+    func fansAreFresh(at date: Date) -> Bool {
+        guard state != .disconnected, fanError == nil, let fansUpdated else { return false }
+        return date.timeIntervalSince(fansUpdated) <= 20
+    }
 
     func isFresh(at date: Date, interval: Double) -> Bool {
         guard state == .connected, let lastUpdated else { return false }
@@ -96,6 +104,7 @@ struct CPUHostState: Identifiable, Sendable {
 @MainActor
 final class CPUMonitorStore: ObservableObject {
     typealias Sampler = @Sendable (String) async throws -> CPUSnapshot
+    typealias FanSampler = @Sendable (String) async throws -> FanSnapshot
     static let savedAliasesKey = "cpuMonitor.enabledAliases"
     static let savedIntervalKey = "cpuMonitor.refreshInterval"
     static let supportedIntervals: [Double] = [1, 2, 3, 5, 10]
@@ -110,15 +119,19 @@ final class CPUMonitorStore: ObservableObject {
     }
 
     private let sampler: Sampler
+    private let fanSampler: FanSampler?
     private let defaults: UserDefaults?
     private var enabledAliases: Set<String>
     private var tasks: [String: Task<Void, Never>] = [:]
+    private var fanTasks: [String: Task<Void, Never>] = [:]
     private var generations: [String: UUID] = [:]
 
     init(defaults: UserDefaults? = nil,
-         sampler: @escaping Sampler = { try await CPUCollector.sample(alias: $0) }) {
+         sampler: @escaping Sampler = { try await CPUCollector.sample(alias: $0) },
+         fanSampler: FanSampler? = nil) {
         self.defaults = defaults
         self.sampler = sampler
+        self.fanSampler = fanSampler
         enabledAliases = Set(defaults?.stringArray(forKey: Self.savedAliasesKey) ?? [])
             .intersection(CPUCollector.aliases)
         if let interval = defaults?.double(forKey: Self.savedIntervalKey),
@@ -156,6 +169,7 @@ final class CPUMonitorStore: ObservableObject {
         hosts[index].isRetrying = false
         let generation = UUID()
         generations[alias] = generation
+        startFans(alias, index: index, generation: generation)
         let sampler = sampler
         tasks[alias] = Task { [weak self] in
             var failures = 0
@@ -203,6 +217,34 @@ final class CPUMonitorStore: ObservableObject {
         stopConnection(alias)
     }
 
+    // Fan sensor access can be slower or unavailable while WSL is healthy.
+    // Keep its SSH deadline, retry loop and freshness independent of CPU data.
+    private func startFans(_ alias: String, index: Int, generation: UUID) {
+        fanTasks.removeValue(forKey: alias)?.cancel()
+        guard let fanSampler, FanCollector.supports(alias) else { return }
+        fanTasks[alias] = Task { [weak self] in
+            var failures = 0
+            while !Task.isCancelled {
+                let started = Date()
+                do {
+                    let sample = try await fanSampler(alias)
+                    guard !Task.isCancelled, let self, self.generations[alias] == generation else { return }
+                    self.hosts[index].fanSnapshot = sample
+                    self.hosts[index].fansUpdated = Date()
+                    self.hosts[index].fanError = nil
+                    failures = 0
+                } catch {
+                    guard !Task.isCancelled, let self, self.generations[alias] == generation else { return }
+                    self.hosts[index].fanError = error.localizedDescription
+                    failures += 1
+                }
+                let delay = failures == 0 ? max(0.2, 5 - Date().timeIntervalSince(started))
+                    : min(60, Double(5 * (1 << min(failures, 4))))
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            }
+        }
+    }
+
     private func saveSelection() {
         defaults?.set(CPUCollector.aliases.filter { enabledAliases.contains($0) }, forKey: Self.savedAliasesKey)
     }
@@ -210,10 +252,14 @@ final class CPUMonitorStore: ObservableObject {
     private func stopConnection(_ alias: String) {
         generations[alias] = nil
         tasks.removeValue(forKey: alias)?.cancel()
+        fanTasks.removeValue(forKey: alias)?.cancel()
         if let index = hosts.firstIndex(where: { $0.id == alias }) {
             hosts[index].state = .disconnected
             hosts[index].errorMessage = nil
             hosts[index].isRetrying = false
+            hosts[index].fanSnapshot = nil
+            hosts[index].fansUpdated = nil
+            hosts[index].fanError = nil
         }
         if selectedID == alias {
             selectedID = hosts.first { $0.state != .disconnected }?.id

@@ -254,6 +254,15 @@
 "cpu.error.sample" = "The CPU sample is incomplete or invalid. Reconnect to retry.";
 "cpu.error.collector" = "The CPU collector is missing from this app.";
 "cpu.error.timeout" = "CPU sampling timed out. Retrying the SSH connection.";
+"fan.waiting" = "Reading host fan speeds…";
+"fan.unsupported" = "No host fan speed interface is currently available for this machine.";
+"fan.unavailable" = "Fan data unavailable";
+"fan.stale" = "Fan sample expired. Waiting for an update.";
+"fan.maximum.detail" = "%@ · %.0f / %.0f RPM (hardware maximum) · %.0f%%\nCyan <50%% · Yellow 50–79%% · Orange ≥80%%. Colors indicate speed, not temperature or faults.";
+"fan.rpm.detail" = "%@ · %.0f RPM\nRated maximum speed is unknown. Colors use absolute speed: cyan <2000 RPM · yellow 2000–3999 RPM · orange ≥4000 RPM, not temperature or faults.";
+"fan.error.sample" = "Invalid fan sample. Retrying.";
+"fan.error.collector" = "The fan collector is missing from this app.";
+"fan.error.timeout" = "Fan sampling timed out. Retrying.";
 
 "npu.connection.title" = "NPU · SSH connection";
 "npu.compact.help" = "NPU HBM used / average AI Core utilization";

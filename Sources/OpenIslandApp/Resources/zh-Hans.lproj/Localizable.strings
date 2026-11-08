@@ -254,6 +254,15 @@
 "cpu.error.sample" = "CPU 采样不完整或无效，请重新连接。";
 "cpu.error.collector" = "应用中缺少 CPU 采集脚本。";
 "cpu.error.timeout" = "CPU 采样超时，正在重试 SSH 连接。";
+"fan.waiting" = "正在读取宿主机风扇转速…";
+"fan.unsupported" = "此机器尚无可用的宿主机风扇转速接口。";
+"fan.unavailable" = "风扇数据不可用";
+"fan.stale" = "风扇数据已过期，等待更新。";
+"fan.maximum.detail" = "%@ · %.0f / %.0f RPM（硬件最高转速）· %.0f%%\n青色 <50%% · 黄色 50–79%% · 橙色 ≥80%%。颜色表示转速，不表示温度或故障。";
+"fan.rpm.detail" = "%@ · %.0f RPM\n额定最高转速未知。颜色按绝对转速分档：青色 <2000 RPM · 黄色 2000–3999 RPM · 橙色 ≥4000 RPM，不表示温度或故障。";
+"fan.error.sample" = "风扇采样无效，正在重试。";
+"fan.error.collector" = "应用中缺少风扇采集脚本。";
+"fan.error.timeout" = "风扇采样超时，正在重试。";
 
 "npu.connection.title" = "NPU · SSH 连接";
 "npu.compact.help" = "NPU HBM 已用百分比 / 平均 AI Core 利用率";

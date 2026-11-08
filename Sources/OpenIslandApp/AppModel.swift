@@ -69,7 +69,7 @@ final class AppModel {
     let codexAppServer = CodexAppServerCoordinator()
     let updateChecker = UpdateChecker()
     let npuMonitor = MonitorStore()
-    let cpuMonitor = CPUMonitorStore(defaults: .standard)
+    let cpuMonitor = CPUMonitorStore(defaults: .standard, fanSampler: { try await FanCollector.sample(alias: $0) })
     @ObservationIgnored private lazy var npuConnectionWindow = NPUConnectionWindowController(monitor: npuMonitor, cpuMonitor: cpuMonitor)
 
     func showNPUConnection() {
