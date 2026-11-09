@@ -960,6 +960,10 @@ final class AppModel {
         ClosedMonitorLabel.text(cpuHosts: cpuMonitor.hosts, npuState: npuMonitor.state)
     }
 
+    var islandOpenedMonitorHeaderWidth: CGFloat {
+        OpenedMonitorSummary.requiredWidth(cpuHostCount: cpuMonitor.activeHosts.count, showsNPU: npuMonitor.state.isMonitoring)
+    }
+
     /// Codex usage takes priority while enabled, including an explicit unknown
     /// state before quota arrives. Otherwise use the task-slot preference.
     func islandClosedRightSlotContent() -> IslandRightSlotContent? {

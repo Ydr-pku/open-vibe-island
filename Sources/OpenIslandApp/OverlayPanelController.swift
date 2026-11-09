@@ -367,11 +367,12 @@ final class OverlayPanelController {
         return Self.rectContainsIncludingEdges(contentRect, point: screenPoint)
     }
 
-    func openedPanelWidth(for screen: NSScreen?) -> CGFloat {
+    func openedPanelWidth(for screen: NSScreen?, monitorHeaderWidth: CGFloat = IslandChromeMetrics.openedHeaderControlsWidth) -> CGFloat {
         guard let screen else { return Self.preferredTopBarOpenedPanelWidth }
         let preferredWidth = screen.safeAreaInsets.top > 0
             ? max(Self.preferredNotchOpenedPanelWidth,
-                  IslandChromeMetrics.minimumNotchedOpenedWidth(notchWidth: screen.notchSize.width))
+                  IslandChromeMetrics.minimumNotchedOpenedWidth(notchWidth: screen.notchSize.width,
+                                                                monitorHeaderWidth: monitorHeaderWidth))
             : Self.preferredTopBarOpenedPanelWidth
         return max(360, min(preferredWidth, screen.visibleFrame.width - 32))
     }
@@ -468,7 +469,7 @@ final class OverlayPanelController {
             )
         }
 
-        let panelWidth = openedPanelWidth(for: screen)
+        let panelWidth = openedPanelWidth(for: screen, monitorHeaderWidth: model.islandOpenedMonitorHeaderWidth)
         let contentHeight = openedContentHeight(for: model)
         // Use at least the empty-state height so the window doesn't shrink
         // when sessions come and go while opened.

@@ -240,8 +240,8 @@ struct V6CenterLabelView: View {
 
 enum ClosedMonitorLabel {
     static func text(cpuHosts: [CPUHostState], npuState: ConnectionState) -> String? {
-        let cpu = cpuHosts.contains { $0.state == .connected || $0.state == .connecting || $0.isRetrying }
-        let npu = npuState == .connected || npuState == .connecting
+        let cpu = cpuHosts.contains(where: \.isMonitoring)
+        let npu = npuState.isMonitoring
         switch (cpu, npu) {
         case (true, true): return "CPU · NPU"
         case (true, false): return "CPU"

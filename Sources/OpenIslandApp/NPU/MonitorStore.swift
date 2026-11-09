@@ -3,6 +3,8 @@ import Combine
 
 enum ConnectionState: Equatable, Sendable {
     case disconnected, connecting, connected, failed
+
+    var isMonitoring: Bool { self == .connecting || self == .connected }
 }
 
 @MainActor

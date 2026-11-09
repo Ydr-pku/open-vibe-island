@@ -88,6 +88,8 @@ struct CPUHostState: Identifiable, Sendable {
     var fansUpdated: Date?
     var fanError: String?
 
+    var isMonitoring: Bool { state.isMonitoring || isRetrying }
+
     func fansAreFresh(at date: Date) -> Bool {
         guard state != .disconnected, fanError == nil, let fansUpdated else { return false }
         return date.timeIntervalSince(fansUpdated) <= 20
@@ -142,6 +144,7 @@ final class CPUMonitorStore: ObservableObject {
 
     var selectedHost: CPUHostState? { hosts.first { $0.id == selectedID } }
     var monitoredHosts: [CPUHostState] { hosts.filter { $0.state != .disconnected } }
+    var activeHosts: [CPUHostState] { hosts.filter(\.isMonitoring) }
 
     /// Called for normal app startup, never by previews or the UI harness.
     func resumeSavedConnections() {

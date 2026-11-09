@@ -165,10 +165,6 @@ struct IslandPanelView: View {
         return (targetOverlayScreen?.safeAreaInsets.top ?? 0) == 0
     }
 
-    private var openedHeaderButtonsWidth: CGFloat {
-        IslandChromeMetrics.openedHeaderControlsWidth
-    }
-
     private var openedHeaderHorizontalPadding: CGFloat {
         usesNotchAwareOpenedHeader ? Self.notchHeaderHorizontalPadding : Self.headerHorizontalPadding
     }
@@ -198,6 +194,9 @@ struct IslandPanelView: View {
             model.refreshOverlayPlacement()
         }
         .onChange(of: CPUGridLayout.panelHeight(for: cpuMonitor)) { _, _ in
+            model.refreshOverlayPlacement()
+        }
+        .onChange(of: model.islandOpenedMonitorHeaderWidth) { _, _ in
             model.refreshOverlayPlacement()
         }
         .onChange(of: cpuMonitor.selectedID) { _, _ in
@@ -375,17 +374,43 @@ struct IslandPanelView: View {
     }
 
     private var openedHeaderButtons: some View {
-        Button {
-            model.showNPUConnection()
-        } label: {
-            Text(cpuMonitor.selectedHost != nil ? "CPU" : (npuMonitor.state == .connected ? "NPU" : "SSH"))
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(cpuMonitor.selectedHost != nil || npuMonitor.state == .connected ? .cyan : .white.opacity(0.7))
-                .frame(width: IslandChromeMetrics.npuHeaderButtonWidth, height: Self.headerControlButtonSize)
-                .background(.white.opacity(0.08), in: Capsule())
+        TimelineView(.periodic(from: .now, by: 2)) { context in
+            let cpuHosts = cpuMonitor.activeHosts
+            let cpuUsage = cpuHosts.map { host in
+                host.isFresh(at: context.date, interval: cpuMonitor.refreshInterval) ? host.snapshot?.totalUsage : nil
+            }
+            let npuFresh = NPUIslandPresentation.isFresh(
+                state: npuMonitor.state, isPaused: npuMonitor.isPaused,
+                lastUpdated: npuMonitor.lastUpdated, refreshInterval: npuMonitor.refreshInterval, at: context.date
+            )
+            let summary = OpenedMonitorSummary(
+                cpuUsage: cpuUsage,
+                npuUsage: npuMonitor.state.isMonitoring
+                    ? (npuFresh ? npuMonitor.snapshot?.hbmPercent : nil, npuFresh ? npuMonitor.snapshot?.averageUtilization : nil)
+                    : nil
+            )
+            let details = zip(cpuHosts, cpuUsage).map { host, usage in
+                "CPU · \(host.id) \(NPUIslandPresentation.percentage(usage))"
+            } + (summary.npuUsage.map { npu in
+                [OpenedMonitorSummary(cpuUsage: [], npuUsage: npu).text]
+            } ?? [])
+
+            Button(action: model.showNPUConnection) {
+                Text(summary.text)
+                    .font(.system(size: OpenedMonitorSummary.fontSize, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(summary.isEmpty ? .white.opacity(0.7) : .cyan)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .padding(.horizontal, OpenedMonitorSummary.horizontalPadding)
+                    .frame(minWidth: IslandChromeMetrics.openedHeaderControlsWidth)
+                    .frame(height: Self.headerControlButtonSize)
+                    .background(.white.opacity(0.08), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help((details + [lang.t("ssh.monitor.title")]).joined(separator: "\n"))
+            .accessibilityLabel(details.isEmpty ? summary.text : details.joined(separator: ", "))
+            .accessibilityHint(lang.t("ssh.monitor.title"))
         }
-        .buttonStyle(.plain)
-        .help(lang.t("ssh.monitor.title"))
     }
 
     private var openedContent: some View {
@@ -851,10 +876,11 @@ struct IslandPanelView: View {
         let contentWidth = max(0, totalWidth - (horizontalPadding * 2))
         guard usesNotchAwareOpenedHeader,
               let screen = targetOverlayScreen else {
+            let controlsWidth = model.islandOpenedMonitorHeaderWidth
             return OpenedHeaderMetrics(
-                leftControlsWidth: min(contentWidth, openedHeaderButtonsWidth),
+                leftControlsWidth: min(contentWidth, controlsWidth),
                 centerGapWidth: 0,
-                rightUsageWidth: max(0, contentWidth - openedHeaderButtonsWidth - Self.headerControlSpacing)
+                rightUsageWidth: max(0, contentWidth - controlsWidth - Self.headerControlSpacing)
             )
         }
 
