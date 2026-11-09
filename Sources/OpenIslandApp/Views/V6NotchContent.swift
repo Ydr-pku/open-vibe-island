@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import OpenIslandCore
 
@@ -237,6 +238,25 @@ struct V6CenterLabelView: View {
 
 // MARK: - Closed-pill layouts
 
+enum ClosedMonitorLabel {
+    static func text(cpuHosts: [CPUHostState], npuState: ConnectionState) -> String? {
+        let cpu = cpuHosts.contains { $0.state == .connected || $0.state == .connecting || $0.isRetrying }
+        let npu = npuState == .connected || npuState == .connecting
+        switch (cpu, npu) {
+        case (true, true): return "CPU · NPU"
+        case (true, false): return "CPU"
+        case (false, true): return "NPU"
+        case (false, false): return nil
+        }
+    }
+
+    static func width(for text: String?) -> CGFloat {
+        guard let text else { return 0 }
+        let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
+        return ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
+    }
+}
+
 /// The canonical v6 closed-island pill rendered inside a fixed-height frame.
 /// Pure view — takes all parameters explicitly so it can be reused for the
 /// live settings preview and the real island.
@@ -253,33 +273,32 @@ struct V6ClosedPill: View {
     /// External mode only — minimum pill width (locked). Defaults to the
     /// width that fits just the glyph.
     var minWidth: CGFloat = 70
-    var npuMonitor: MonitorStore? = nil
+    var monitorLabel: String? = nil
 
-    private var leftWidth: CGFloat { NPUIslandPresentation.compactWidth(for: npuMonitor) }
+    private var leftWidth: CGFloat { ClosedMonitorLabel.width(for: monitorLabel) }
 
     static func contentWidth(layout: V6ClosedLayout, height: CGFloat, physicalNotchWidth: CGFloat,
                              label: String?, rightSlot: IslandRightSlotContent?,
-                             leftWidth: CGFloat = NPUIslandPresentation.compactWidth(state: .disconnected),
+                             monitorLabel: String? = nil,
                              minWidth: CGFloat = 70) -> CGFloat {
         let pad = height / 2
-        let leftW = leftWidth
+        let leftW = ClosedMonitorLabel.width(for: monitorLabel)
         let rightW = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
         if layout == .macbook {
             return physicalNotchWidth + 2 * max(44, max(leftW, rightW) + pad)
         }
         let labelW = label.map { 6 + V6CenterLabelView.intrinsicWidth(of: $0) } ?? 0
-        return max(minWidth, pad * 2 + leftW + labelW + 6 + rightW)
+        return max(minWidth, pad * 2 + leftW + labelW + innerGap + rightW)
     }
 
     @ViewBuilder
     private var leftContent: some View {
-        if let npuMonitor {
-            NPUClosedStatusView(monitor: npuMonitor)
-        } else {
-            Text("NPU")
+        if let monitorLabel {
+            Text(monitorLabel)
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.4))
-                .frame(width: leftWidth, alignment: .leading)
+                .foregroundStyle(.white.opacity(0.75))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 
@@ -302,14 +321,8 @@ struct V6ClosedPill: View {
     // MARK: External (fluid)
 
     private var externalBody: some View {
-        let glyphW = leftWidth
-        let labelW = label.map { V6CenterLabelView.intrinsicWidth(of: $0) } ?? 0
-        let rightW = rightSlot.map { V6RightSlotView.intrinsicWidth(of: $0) } ?? 0
-
-        let labelBlock = (label == nil ? 0 : 6 + labelW)
-        let rightBlock = Self.innerGap + rightW
-        let intrinsic = pad * 2 + glyphW + labelBlock + rightBlock
-        let width = max(minWidth, intrinsic)
+        let width = Self.contentWidth(layout: .external, height: height, physicalNotchWidth: 0,
+                                      label: label, rightSlot: rightSlot, monitorLabel: monitorLabel, minWidth: minWidth)
 
         return ZStack {
             V6ClosedPillShape()
@@ -317,7 +330,7 @@ struct V6ClosedPill: View {
 
             HStack(spacing: 0) {
                 leftContent
-                    .frame(width: glyphW, height: 24)
+                    .frame(width: leftWidth, height: 24, alignment: .leading)
 
                 if let label {
                     V6CenterLabelView(text: label)
@@ -341,7 +354,6 @@ struct V6ClosedPill: View {
                 AnyHashable(label ?? ""),
                 AnyHashable(rightSlot.map(RightSlotKey.init) ?? .none),
                 AnyHashable(mode),
-                AnyHashable(leftWidth),
             ])
         )
     }
@@ -350,7 +362,7 @@ struct V6ClosedPill: View {
 
     private var macbookBody: some View {
         let outer = Self.contentWidth(layout: .macbook, height: height, physicalNotchWidth: physicalNotchWidth,
-                                      label: nil, rightSlot: rightSlot, leftWidth: leftWidth)
+                                      label: nil, rightSlot: rightSlot, monitorLabel: monitorLabel)
 
         return ZStack {
             V6ClosedPillShape()
@@ -358,7 +370,7 @@ struct V6ClosedPill: View {
 
             HStack(spacing: 0) {
                 leftContent
-                    .frame(width: leftWidth, height: 24)
+                    .frame(width: leftWidth, height: 24, alignment: .leading)
 
                 Spacer(minLength: 0)
 
@@ -369,7 +381,6 @@ struct V6ClosedPill: View {
             .padding(.horizontal, pad)
         }
         .frame(width: outer, height: height)
-        .animation(.easeInOut(duration: 0.2), value: leftWidth)
     }
 }
 

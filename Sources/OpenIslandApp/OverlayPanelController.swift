@@ -496,7 +496,7 @@ final class OverlayPanelController {
             physicalNotchWidth: isNotched ? screen.notchSize.width : 0,
             label: isNotched ? nil : model.islandClosedLabel(),
             rightSlot: model.islandClosedRightSlotContent(),
-            leftWidth: NPUIslandPresentation.compactWidth(for: model.npuMonitor)
+            monitorLabel: model.islandClosedMonitorLabel
         )
         return width * (model.notchStatus == .popping ? 1.04 : 1)
     }

@@ -21,8 +21,7 @@ struct NPUIslandPresentationTests {
         #expect(NPUIslandPresentation.percentage(nil) == "—%")
         #expect(NPUIslandPresentation.percentage(0) == "0%")
         #expect(NPUIslandPresentation.percentage(99.8) == "100%")
-        #expect(NPUIslandPresentation.coreLabel(0) == "Core0%")
-        #expect(NPUIslandPresentation.coreLabel(nil) == "Core—%")
+        #expect(NPUIslandPresentation.percentage(.nan) == "—%")
     }
 
     @Test
@@ -33,45 +32,58 @@ struct NPUIslandPresentationTests {
     }
 
     @Test
-    func externalDisplayReservesSpaceEvenWithAnEmptyRightLane() {
-        let width = V6ClosedPill.contentWidth(layout: .external, height: 24, physicalNotchWidth: 0,
-                                              label: nil, rightSlot: nil)
-        #expect(width >= 24 + NPUIslandPresentation.compactWidth(state: .disconnected) + 6)
+    func closedMonitorLabelFollowsActiveMonitorsIncludingRetry() {
+        let active = CPUHostState(id: "macserver", state: .connected)
+        let stopped = CPUHostState(id: "macserver", state: .failed)
+        let retrying = CPUHostState(id: "macserver", state: .failed, isRetrying: true)
+
+        #expect(ClosedMonitorLabel.text(cpuHosts: [stopped], npuState: .disconnected) == nil)
+        #expect(ClosedMonitorLabel.text(cpuHosts: [active], npuState: .disconnected) == "CPU")
+        #expect(ClosedMonitorLabel.text(cpuHosts: [], npuState: .connected) == "NPU")
+        #expect(ClosedMonitorLabel.text(cpuHosts: [retrying], npuState: .connecting) == "CPU · NPU")
     }
 
     @Test
-    func bothClosedLanesRemainOutsideThePhysicalNotch() {
+    func combinedMonitorLabelFitsBothClosedLayouts() {
         let right: IslandRightSlotContent = .usage(quotaRemainingPercentage: 100, resetTimeRemainingPercentage: 100)
-        let leftWidth = NPUIslandPresentation.compactWidth(state: .connected, hbm: 100, core: 100)
+        let label = ClosedMonitorLabel.text(cpuHosts: [CPUHostState(id: "macserver", state: .connected)], npuState: .connected)
+        let leftWidth = ClosedMonitorLabel.width(for: label)
+        let rightWidth = V6RightSlotView.intrinsicWidth(of: right)
         let width = V6ClosedPill.contentWidth(layout: .macbook, height: 32, physicalNotchWidth: 224,
-                                              label: nil, rightSlot: right, leftWidth: leftWidth)
+                                              label: nil, rightSlot: right, monitorLabel: label)
         let laneWidth = (width - 224) / 2 - 16
         #expect(laneWidth >= leftWidth)
-        #expect(laneWidth >= V6RightSlotView.intrinsicWidth(of: right))
+        #expect(laneWidth + 0.01 >= rightWidth)
         let hitArea = OverlayPanelController.closedSurfaceRect(notchRect: .init(x: 200, y: 0, width: 224, height: 32), closedWidth: width)
         #expect(hitArea.width == width)
         #expect(hitArea.midX == 312)
+
+        let externalWidth = V6ClosedPill.contentWidth(layout: .external, height: 24, physicalNotchWidth: 0,
+                                                      label: nil, rightSlot: right, monitorLabel: label)
+        #expect(externalWidth + 0.01 >= 24 + leftWidth + 6 + rightWidth)
     }
 
     @Test
-    func idleAndSmallValuesUseNarrowerLanesWithoutClipping() {
-        let disconnected = NPUIslandPresentation.compactWidth(state: .disconnected)
-        let small = NPUIslandPresentation.compactWidth(state: .connected, hbm: 5, core: 0)
-        let maximum = NPUIslandPresentation.compactWidth(state: .connected, hbm: 100, core: 100)
-        let demo = NPUIslandPresentation.compactWidth(state: .connected, isDemo: true, hbm: 100, core: 100)
-        #expect(disconnected < small)
-        #expect(small < maximum)
-        #expect(demo > maximum)
-        #expect(maximum < 112)
-        #expect(NPUIslandPresentation.compactWidth(state: .connecting) > disconnected)
-        #expect(NPUIslandPresentation.compactWidth(state: .failed) > disconnected)
+    func expandedPanelReservesChipRowsEvenWithoutProcesses() {
+        let monitor = MonitorStore(startsTimer: false)
+        var snapshot = MonitorStore.demoSnapshot(at: Date())
+        snapshot.processes = []
+        monitor.state = .connected
+        monitor.snapshot = snapshot
 
-        let right: IslandRightSlotContent = .usage(quotaRemainingPercentage: 95, resetTimeRemainingPercentage: 99)
-        let idleIsland = V6ClosedPill.contentWidth(layout: .macbook, height: 32, physicalNotchWidth: 224,
-                                                   label: nil, rightSlot: right, leftWidth: disconnected)
-        let connectedIsland = V6ClosedPill.contentWidth(layout: .macbook, height: 32, physicalNotchWidth: 224,
-                                                        label: nil, rightSlot: right, leftWidth: small)
-        #expect(idleIsland < 224 + 2 * (112 + 16))
-        #expect(connectedIsland < 224 + 2 * (112 + 16))
+        let withoutProcesses = NPUIslandPresentation.contentHeight(for: monitor)
+        snapshot.devices = []
+        monitor.snapshot = snapshot
+        let withoutDevices = NPUIslandPresentation.contentHeight(for: monitor)
+        #expect(withoutProcesses - withoutDevices == 98)
+
+        snapshot.devices = MonitorStore.demoSnapshot(at: Date()).devices
+        snapshot.devices += snapshot.devices.map { device in
+            var extra = device
+            extra.npuID += 100
+            return extra
+        }
+        monitor.snapshot = snapshot
+        #expect(NPUIslandPresentation.contentHeight(for: monitor) == withoutProcesses)
     }
 }

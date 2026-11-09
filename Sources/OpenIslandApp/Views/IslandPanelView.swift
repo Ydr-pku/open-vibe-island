@@ -274,11 +274,7 @@ struct IslandPanelView: View {
 
     // MARK: - v6 closed surface
 
-    /// Closed island per v6 spec. Renders the flat-top pill with the
-    /// UnifiedBars glyph, respecting the user's right-slot / center-label
-    /// preferences. AppModel is @Observable so any change to sessions /
-    /// preferences re-renders this automatically; UnifiedBars runs its own
-    /// TimelineView internally for bar animation.
+    /// Keep monitor status separate from the session label and usage slots.
     @ViewBuilder
     private func v6ClosedSurface() -> some View {
         let layout: V6ClosedLayout = isExternalDisplayPlacement ? .external : .macbook
@@ -291,7 +287,7 @@ struct IslandPanelView: View {
             height: closedNotchHeight,
             physicalNotchWidth: layout == .macbook ? physicalNotchWidth : 0,
             minWidth: 70,
-            npuMonitor: npuMonitor
+            monitorLabel: model.islandClosedMonitorLabel
         )
         .scaleEffect(isPopping ? 1.04 : 1, anchor: .top)
         .animation(popAnimation, value: isPopping)

@@ -5,33 +5,19 @@ import SwiftUI
 enum NPUIslandPresentation {
     static let rowHeight: CGFloat = 24
     static let visibleRows = 6
-    private static func textWidth(_ value: String) -> CGFloat {
-        let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
-        return ceil((value as NSString).size(withAttributes: [.font: font]).width)
+    static let utilizationRowHeight: CGFloat = 18
+    static let visibleDeviceRows = 4
+    static let utilizationHeaderHeight: CGFloat = 14
+    static let utilizationHeaderSpacing: CGFloat = 4
+    static let sectionSpacing: CGFloat = 8
+
+    static func utilizationRowsHeight(deviceCount: Int) -> CGFloat {
+        utilizationRowHeight * CGFloat(min(visibleDeviceRows, deviceCount))
     }
 
-    static func coreLabel(_ value: Double?) -> String {
-        "Core\(percentage(value))"
-    }
-
-    static func compactWidth(state: ConnectionState, isDemo: Bool = false,
-                             hbm: Double? = nil, core: Double? = nil) -> CGFloat {
-        switch state {
-        case .connected:
-            let demoWidth: CGFloat = isDemo ? textWidth("D") + 5 : 0
-            return demoWidth + textWidth("HBM\(percentage(hbm))") + 5 + textWidth(coreLabel(core)) + 2
-        case .connecting, .failed:
-            return 14 + 5 + textWidth("NPU") + 2
-        case .disconnected:
-            return textWidth("NPU") + 2
-        }
-    }
-
-    @MainActor
-    static func compactWidth(for monitor: MonitorStore?) -> CGFloat {
-        guard let monitor else { return compactWidth(state: .disconnected) }
-        return compactWidth(state: monitor.state, isDemo: monitor.isDemo,
-                            hbm: monitor.snapshot?.hbmPercent, core: monitor.snapshot?.averageUtilization)
+    static func utilizationSectionHeight(deviceCount: Int) -> CGFloat {
+        guard deviceCount > 0 else { return 0 }
+        return utilizationHeaderHeight + utilizationHeaderSpacing + utilizationRowsHeight(deviceCount: deviceCount)
     }
 
     static func isFresh(state: ConnectionState, isPaused: Bool, lastUpdated: Date?, refreshInterval: Double, at date: Date) -> Bool {
@@ -42,50 +28,23 @@ enum NPUIslandPresentation {
     @MainActor
     static func contentHeight(for monitor: MonitorStore) -> CGFloat {
         guard monitor.state == .connected, let snapshot = monitor.snapshot else { return 84 }
-        return 68 + rowHeight * CGFloat(max(1, min(visibleRows, snapshot.processes.count)))
+        let utilization = utilizationSectionHeight(deviceCount: snapshot.devices.count)
+        return 68 + (utilization > 0 ? utilization + sectionSpacing : 0)
+            + rowHeight * CGFloat(max(1, min(visibleRows, snapshot.processes.count)))
+    }
+
+    static func utilizationFraction(_ value: Double?) -> CGFloat? {
+        guard let value, value.isFinite else { return nil }
+        return CGFloat(min(100, max(0, value)) / 100)
     }
 
     static func percentage(_ value: Double?) -> String {
-        value.map { "\(Int(min(100, max(0, $0)).rounded()))%" } ?? "—%"
+        guard let fraction = utilizationFraction(value) else { return "—%" }
+        return "\(Int((fraction * 100).rounded()))%"
     }
-}
 
-struct NPUClosedStatusView: View {
-    @ObservedObject var monitor: MonitorStore
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 2)) { context in
-            let fresh = NPUIslandPresentation.isFresh(
-                state: monitor.state, isPaused: monitor.isPaused,
-                lastUpdated: monitor.lastUpdated, refreshInterval: monitor.refreshInterval, at: context.date
-            )
-            Group {
-                if monitor.state == .connected {
-                    HStack(spacing: 5) {
-                        if monitor.isDemo { Text("D").foregroundStyle(.orange) }
-                        Text("HBM\(NPUIslandPresentation.percentage(fresh ? monitor.snapshot?.hbmPercent : nil))")
-                            .foregroundStyle(fresh ? .purple.opacity(0.95) : .white.opacity(0.4))
-                        Text(NPUIslandPresentation.coreLabel(fresh ? monitor.snapshot?.averageUtilization : nil))
-                            .foregroundStyle(fresh ? .cyan.opacity(0.95) : .white.opacity(0.4))
-                    }
-                } else {
-                    HStack(spacing: 5) {
-                        if monitor.state == .connecting {
-                            ProgressView().controlSize(.mini).frame(width: 14, height: 14)
-                        } else if monitor.state == .failed {
-                            Image(systemName: "exclamationmark.circle").foregroundStyle(.orange).frame(width: 14)
-                        }
-                        Text("NPU").foregroundStyle(.white.opacity(0.4))
-                    }
-                }
-            }
-            .font(.system(size: 10, weight: .bold, design: .monospaced))
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .frame(width: NPUIslandPresentation.compactWidth(for: monitor), alignment: .leading)
-            .help(LanguageManager.shared.t("npu.compact.help"))
-            .accessibilityLabel(LanguageManager.shared.t("npu.compact.help"))
-        }
+    static func utilizationDevices(_ devices: [NPUDevice]) -> [NPUDevice] {
+        devices.sorted { ($0.npuID, $0.chipID) < ($1.npuID, $1.chipID) }
     }
 }
 
@@ -96,7 +55,7 @@ struct NPUProcessPanel: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 2)) { context in
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: NPUIslandPresentation.sectionSpacing) {
                 HStack(spacing: 6) {
                     Text(lang.t("npu.processes.title")).font(.system(size: 10, weight: .semibold))
                     if monitor.isDemo { Text("DEMO").foregroundStyle(.orange) }
@@ -129,6 +88,10 @@ struct NPUProcessPanel: View {
                     }
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(fresh ? .white.opacity(0.38) : .orange)
+
+                    if !snapshot.devices.isEmpty {
+                        utilizationSection(snapshot.devices, fresh: fresh)
+                    }
 
                     if snapshot.processes.isEmpty {
                         Text(lang.t("npu.processes.empty"))
@@ -172,6 +135,61 @@ struct NPUProcessPanel: View {
         case .disconnected: lang.t("npu.disconnected")
         case .connected: lang.t("npu.stale")
         }
+    }
+
+    private func utilizationSection(_ devices: [NPUDevice], fresh: Bool) -> some View {
+        VStack(spacing: NPUIslandPresentation.utilizationHeaderSpacing) {
+            HStack(spacing: 16) {
+                Text("HBM · NPU:Chip").frame(maxWidth: .infinity, alignment: .leading)
+                Text("AIC · NPU:Chip").frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.65))
+            .frame(height: NPUIslandPresentation.utilizationHeaderHeight)
+
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0) {
+                    ForEach(NPUIslandPresentation.utilizationDevices(devices)) { device in
+                        HStack(spacing: 16) {
+                            utilizationBar("HBM", device: device, value: fresh ? device.hbmPercent : nil, color: .purple)
+                            utilizationBar("AIC", device: device, value: fresh ? device.utilization : nil, color: .cyan)
+                        }
+                        .frame(height: NPUIslandPresentation.utilizationRowHeight)
+                    }
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollIndicators(devices.count > NPUIslandPresentation.visibleDeviceRows ? .visible : .hidden)
+            .frame(height: NPUIslandPresentation.utilizationRowsHeight(deviceCount: devices.count))
+        }
+    }
+
+    private func utilizationBar(_ title: String, device: NPUDevice, value: Double?, color: Color) -> some View {
+        let fraction = NPUIslandPresentation.utilizationFraction(value)
+        return HStack(spacing: 6) {
+            Text(device.id)
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .frame(width: 36, alignment: .leading)
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.1))
+                    if let fraction, fraction > 0 {
+                        Capsule().fill(color.opacity(0.9))
+                            .frame(width: geometry.size.width * fraction)
+                    }
+                }
+            }
+            .frame(height: 6)
+            Text(NPUIslandPresentation.percentage(value))
+                .foregroundStyle(fraction == nil ? .white.opacity(0.4) : color.opacity(0.95))
+                .frame(width: 34, alignment: .trailing)
+        }
+        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("NPU \(device.npuID), chip \(device.chipID), \(title)")
+        .accessibilityValue(NPUIslandPresentation.percentage(value))
     }
 
     private func processRow(_ process: NPUProcess) -> some View {

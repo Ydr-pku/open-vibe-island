@@ -956,6 +956,10 @@ final class AppModel {
         }
     }
 
+    var islandClosedMonitorLabel: String? {
+        ClosedMonitorLabel.text(cpuHosts: cpuMonitor.hosts, npuState: npuMonitor.state)
+    }
+
     /// Codex usage takes priority while enabled, including an explicit unknown
     /// state before quota arrives. Otherwise use the task-slot preference.
     func islandClosedRightSlotContent() -> IslandRightSlotContent? {
