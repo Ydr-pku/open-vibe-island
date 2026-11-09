@@ -277,7 +277,12 @@
 "npu.chips" = "個晶片";
 "npu.address" = "SSH 位址";
 "npu.password" = "SSH 密碼";
-"npu.credentials.help" = "密碼僅用於本次連線，不會儲存。";
+"npu.credentials.help" = "macOS 鑰匙圈只保留最近一次連線成功的 NPU 密碼，用於自動重新連線。";
+"npu.reconnecting" = "連線中斷，正在自動重新連線…";
+"npu.credentials.readFailed" = "無法讀取已儲存的密碼，請解鎖鑰匙圈或重新輸入。";
+"npu.credentials.saveFailed" = "無法儲存密碼，本次可自動重新連線，結束應用程式後需重新輸入。";
+"npu.credentials.missing" = "找不到已儲存的密碼，請重新輸入。";
+"npu.credentials.cleanupFailed" = "新密碼已儲存，但無法清除較舊的 NPU 密碼。";
 "npu.interval" = "更新間隔";
 "npu.connection.help" = "支援直連密碼認證，首次連線需確認主機指紋。";
 "npu.trust.title" = "核對 SSH 主機指紋";

@@ -48,8 +48,9 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
 
             // Hide all windows on launch — settings opens on demand only.
             OpenIslandAppDelegate.hideAllAppWindows()
-            if harnessLaunchConfiguration.scenario != nil,
-               ProcessInfo.processInfo.environment["OPEN_ISLAND_HARNESS_NPU_CONNECTION"] == "1" {
+            if harnessLaunchConfiguration.scenario == nil {
+                model.restoreNPUConnection()
+            } else if ProcessInfo.processInfo.environment["OPEN_ISLAND_HARNESS_NPU_CONNECTION"] == "1" {
                 model.showNPUConnection()
             }
 
@@ -89,7 +90,7 @@ final class OpenIslandAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        model.npuMonitor.disconnect()
+        model.npuMonitor.shutdown()
         model.cpuMonitor.shutdown()
     }
 

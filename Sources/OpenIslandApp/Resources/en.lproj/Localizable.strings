@@ -278,7 +278,12 @@
 "npu.chips" = "chips";
 "npu.address" = "SSH address";
 "npu.password" = "SSH password";
-"npu.credentials.help" = "Password is used only for this connection and is never saved.";
+"npu.credentials.help" = "macOS Keychain keeps only the latest successfully verified NPU password for automatic reconnection.";
+"npu.reconnecting" = "Connection interrupted. Reconnecting automatically…";
+"npu.credentials.readFailed" = "Unable to read the saved password. Unlock Keychain or enter it again.";
+"npu.credentials.saveFailed" = "Unable to save the password. Reconnection works until the app exits.";
+"npu.credentials.missing" = "The saved password was not found. Please enter it again.";
+"npu.credentials.cleanupFailed" = "The new password was saved, but older NPU passwords could not be removed.";
 "npu.interval" = "Refresh";
 "npu.connection.help" = "Direct password authentication. Confirm the host fingerprint on first connection.";
 "npu.trust.title" = "Verify SSH host fingerprint";

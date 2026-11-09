@@ -70,11 +70,25 @@ final class AppModel {
     let updateChecker = UpdateChecker()
     let npuMonitor = MonitorStore()
     let cpuMonitor = CPUMonitorStore(defaults: .standard, fanSampler: { try await FanCollector.sample(alias: $0) })
-    @ObservationIgnored private lazy var npuConnectionWindow = NPUConnectionWindowController(monitor: npuMonitor, cpuMonitor: cpuMonitor)
+    @ObservationIgnored private lazy var npuConnectionPersistence: NPUConnectionPersistence = {
+        let persistence = NPUConnectionPersistence(monitor: npuMonitor)
+        persistence.onHostTrustRequired = { [weak self] in self?.showNPUConnection() }
+        return persistence
+    }()
+    @ObservationIgnored private lazy var npuConnectionWindow = NPUConnectionWindowController(
+        monitor: npuMonitor, cpuMonitor: cpuMonitor, persistence: npuConnectionPersistence
+    )
 
-    func showNPUConnection() {
+    func restoreNPUConnection() {
+        npuConnectionPersistence.restoreIfNeeded()
+    }
+
+    func showCPUConnection() { showMonitorConnection(tab: .cpu) }
+    func showNPUConnection() { showMonitorConnection(tab: .npu) }
+
+    private func showMonitorConnection(tab: SSHMonitorTab) {
         notchClose()
-        npuConnectionWindow.show()
+        npuConnectionWindow.show(tab: tab, loadCredential: !ignoresPointerExitDuringHarness)
     }
 
     var notchStatus: NotchStatus {

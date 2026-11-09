@@ -129,7 +129,8 @@ struct NPUProcessPanel: View {
     }
 
     private var statusMessage: String {
-        switch monitor.state {
+        if monitor.isReconnecting { return lang.t("npu.reconnecting") }
+        return switch monitor.state {
         case .connecting: lang.t("npu.connecting")
         case .failed: monitor.errorMessage ?? lang.t("npu.failed")
         case .disconnected: lang.t("npu.disconnected")
@@ -209,12 +210,23 @@ struct NPUProcessPanel: View {
     }
 }
 
+enum SSHMonitorTab: Hashable { case cpu, npu }
+
+@MainActor
+private final class SSHMonitorWindowSelection: ObservableObject {
+    @Published var tab: SSHMonitorTab = .cpu
+}
+
 @MainActor
 final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate {
     private let monitor: MonitorStore
+    private let persistence: NPUConnectionPersistence
+    private let selection = SSHMonitorWindowSelection()
+    private var allowsCredentialAutofill = false
 
-    init(monitor: MonitorStore, cpuMonitor: CPUMonitorStore) {
+    init(monitor: MonitorStore, cpuMonitor: CPUMonitorStore, persistence: NPUConnectionPersistence) {
         self.monitor = monitor
+        self.persistence = persistence
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false
@@ -226,42 +238,56 @@ final class NPUConnectionWindowController: NSWindowController, NSWindowDelegate 
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
-        window.contentView = NSHostingView(rootView: SSHMonitorConnectionView(monitor: monitor, cpuMonitor: cpuMonitor))
+        window.contentView = NSHostingView(rootView: SSHMonitorConnectionView(
+            monitor: monitor, cpuMonitor: cpuMonitor, persistence: persistence, selection: selection,
+            shouldLoadCredentials: { [weak self] in
+                guard let self else { return false }
+                return self.allowsCredentialAutofill && self.window?.isVisible == true && self.selection.tab == .npu
+            }
+        ))
         window.center()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func show() {
+    func show(tab: SSHMonitorTab, loadCredential: Bool) {
+        allowsCredentialAutofill = loadCredential
+        selection.tab = tab
+        if loadCredential, tab == .npu, window?.isVisible != true {
+            persistence.prepareForDisplay()
+        }
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
-        monitor.password = ""
-        if monitor.state == .connecting { monitor.disconnect() }
+        allowsCredentialAutofill = false
+        persistence.clearPasswordField()
+        if monitor.hostTrustRequest != nil { monitor.rejectHost() }
     }
 }
 
 private struct SSHMonitorConnectionView: View {
     @ObservedObject var monitor: MonitorStore
     @ObservedObject var cpuMonitor: CPUMonitorStore
-    @State private var showsCPU = true
+    @ObservedObject var persistence: NPUConnectionPersistence
+    @ObservedObject var selection: SSHMonitorWindowSelection
+    let shouldLoadCredentials: () -> Bool
     private var lang: LanguageManager { .shared }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(lang.t("ssh.monitor.title")).font(.title3.weight(.semibold))
-            Picker(lang.t("ssh.monitor.title"), selection: $showsCPU) {
-                Text(lang.t("cpu.title")).tag(true)
-                Text(lang.t("cpu.npuTab")).tag(false)
+            Picker(lang.t("ssh.monitor.title"), selection: $selection.tab) {
+                Text(lang.t("cpu.title")).tag(SSHMonitorTab.cpu)
+                Text(lang.t("cpu.npuTab")).tag(SSHMonitorTab.npu)
             }.pickerStyle(.segmented).labelsHidden()
             ScrollView {
-                if showsCPU {
+                if selection.tab == .cpu {
                     CPUConnectionView(monitor: cpuMonitor)
                 } else {
-                    NPUConnectionView(monitor: monitor)
+                    NPUConnectionView(monitor: monitor, persistence: persistence, shouldLoadCredentials: shouldLoadCredentials)
                 }
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -269,23 +295,42 @@ private struct SSHMonitorConnectionView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .preferredColorScheme(.dark)
-        .onAppear { showsCPU = cpuMonitor.selectedID != nil || monitor.state == .disconnected }
+        .onChange(of: selection.tab) { _, tab in
+            if tab == .cpu { persistence.clearPasswordField() }
+        }
+        .sheet(item: $monitor.hostTrustRequest) { request in
+            VStack(alignment: .leading, spacing: 18) {
+                Text(lang.t("npu.trust.title")).font(.headline)
+                ScrollView { Text(request.prompt).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
+                    .frame(maxHeight: 180)
+                HStack {
+                    Spacer()
+                    Button(lang.t("npu.cancel")) { monitor.rejectHost() }
+                    Button(lang.t("npu.trust.confirm")) { monitor.approveHost() }
+                }
+            }
+            .padding(24).frame(width: 460).interactiveDismissDisabled()
+        }
     }
 }
 
 private struct NPUConnectionView: View {
     @ObservedObject var monitor: MonitorStore
+    @ObservedObject var persistence: NPUConnectionPersistence
+    let shouldLoadCredentials: () -> Bool
     private enum Field { case address, password }
     @FocusState private var focusedField: Field?
     private var lang: LanguageManager { .shared }
-    private var active: Bool { monitor.state == .connecting || monitor.state == .connected }
+    private var active: Bool { monitor.state.isMonitoring }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(lang.t("npu.connection.title")).font(.title3.weight(.semibold))
             VStack(alignment: .leading, spacing: 4) {
                 Text(lang.t("npu.address")).font(.caption).foregroundStyle(.secondary)
-                TextField("ssh -p 22 user@host", text: $monitor.connectionInput)
+                TextField("ssh -p 22 user@host", text: Binding(
+                    get: { monitor.connectionInput }, set: { persistence.updateAddress($0) }
+                ))
                     .font(.system(size: 12, design: .monospaced))
                     .textFieldStyle(.plain).foregroundStyle(.white)
                     .padding(8).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
@@ -294,11 +339,13 @@ private struct NPUConnectionView: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(lang.t("npu.password")).font(.caption).foregroundStyle(.secondary)
-                SecureField(lang.t("npu.password"), text: $monitor.password)
+                SecureField(lang.t("npu.password"), text: Binding(
+                    get: { monitor.password }, set: { persistence.updatePassword($0) }
+                ))
                     .textFieldStyle(.plain).foregroundStyle(.white)
                     .padding(8).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
                     .disabled(active).focused($focusedField, equals: .password)
-                    .onSubmit { if !active { monitor.connect() } }
+                    .onSubmit { if !active { persistence.connect() } }
             }
             Text(lang.t("npu.credentials.help"))
                 .font(.caption).foregroundStyle(.secondary)
@@ -312,11 +359,16 @@ private struct NPUConnectionView: View {
                 Spacer()
                 if monitor.state == .connecting { ProgressView().controlSize(.small) }
                 Button(active ? lang.t("npu.disconnect") : lang.t("npu.connect")) {
-                    active ? monitor.disconnect() : monitor.connect()
+                    active ? monitor.disconnect() : persistence.connect()
                 }
                 .keyboardShortcut(.defaultAction)
             }
-            if let error = monitor.errorMessage {
+            if let notice = persistence.credentialNoticeKey {
+                Text(lang.t(notice)).font(.caption).foregroundStyle(.orange)
+            }
+            if monitor.isReconnecting {
+                Text(lang.t("npu.reconnecting")).font(.caption).foregroundStyle(.orange)
+            } else if let error = monitor.errorMessage {
                 ScrollView { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             } else {
                 Text(monitor.state == .connected ? lang.t("npu.connected") : lang.t("npu.connection.help"))
@@ -326,19 +378,12 @@ private struct NPUConnectionView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 282, alignment: .topLeading)
         .preferredColorScheme(.dark)
-        .onAppear { focusedField = monitor.connectionInput.isEmpty ? .address : .password }
-        .sheet(item: $monitor.hostTrustRequest) { request in
-            VStack(alignment: .leading, spacing: 18) {
-                Text(lang.t("npu.trust.title")).font(.headline)
-                ScrollView { Text(request.prompt).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
-                    .frame(maxHeight: 180)
-                HStack {
-                    Spacer()
-                    Button(lang.t("npu.cancel")) { monitor.rejectHost() }
-                    Button(lang.t("npu.trust.confirm")) { monitor.approveHost() }
-                }
-            }
-            .padding(24).frame(width: 460).interactiveDismissDisabled()
+        .onAppear {
+            if shouldLoadCredentials() { persistence.prepareForDisplay() }
+            focusedField = monitor.connectionInput.isEmpty ? .address : .password
+        }
+        .onChange(of: monitor.state) { oldState, newState in
+            persistence.connectionStateDidChange(from: oldState, to: newState, windowVisible: shouldLoadCredentials())
         }
     }
 }

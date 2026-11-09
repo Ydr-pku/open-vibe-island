@@ -278,7 +278,12 @@
 "npu.chips" = "个芯片";
 "npu.address" = "SSH 地址";
 "npu.password" = "SSH 密码";
-"npu.credentials.help" = "密码仅用于本次连接，不会保存。";
+"npu.credentials.help" = "macOS 钥匙串只保留最近一次连接成功的 NPU 密码，用于自动重连。";
+"npu.reconnecting" = "连接中断，正在自动重连…";
+"npu.credentials.readFailed" = "无法读取已保存的密码，请解锁钥匙串或重新输入。";
+"npu.credentials.saveFailed" = "无法保存密码，本次可自动重连，退出应用后需重新输入。";
+"npu.credentials.missing" = "未找到已保存的密码，请重新输入。";
+"npu.credentials.cleanupFailed" = "新密码已保存，但无法清理较旧的 NPU 密码。";
 "npu.interval" = "刷新间隔";
 "npu.connection.help" = "支持直连密码认证，首次连接需确认主机指纹。";
 "npu.trust.title" = "核对 SSH 主机指纹";

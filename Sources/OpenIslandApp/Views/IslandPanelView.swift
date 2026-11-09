@@ -389,28 +389,39 @@ struct IslandPanelView: View {
                     ? (npuFresh ? npuMonitor.snapshot?.hbmPercent : nil, npuFresh ? npuMonitor.snapshot?.averageUtilization : nil)
                     : nil
             )
-            let details = zip(cpuHosts, cpuUsage).map { host, usage in
-                "CPU · \(host.id) \(NPUIslandPresentation.percentage(usage))"
-            } + (summary.npuUsage.map { npu in
-                [OpenedMonitorSummary(cpuUsage: [], npuUsage: npu).text]
-            } ?? [])
-
-            Button(action: model.showNPUConnection) {
-                Text(summary.text)
-                    .font(.system(size: OpenedMonitorSummary.fontSize, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(summary.isEmpty ? .white.opacity(0.7) : .cyan)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-                    .padding(.horizontal, OpenedMonitorSummary.horizontalPadding)
-                    .frame(minWidth: IslandChromeMetrics.openedHeaderControlsWidth)
-                    .frame(height: Self.headerControlButtonSize)
-                    .background(.white.opacity(0.08), in: Capsule())
+            HStack(spacing: OpenedMonitorSummary.chipSpacing) {
+                if let cpuText = summary.cpuText {
+                    let details = zip(cpuHosts, cpuUsage).map { host, usage in
+                        "CPU · \(host.id) \(NPUIslandPresentation.percentage(usage))"
+                    }
+                    monitorHeaderChip(cpuText, details: details, action: model.showCPUConnection)
+                }
+                if let npuText = summary.npuText {
+                    monitorHeaderChip(npuText, details: [npuText], action: model.showNPUConnection)
+                }
+                if summary.cpuText == nil, summary.npuText == nil {
+                    monitorHeaderChip("SSH", details: [], action: model.showCPUConnection)
+                }
             }
-            .buttonStyle(.plain)
-            .help((details + [lang.t("ssh.monitor.title")]).joined(separator: "\n"))
-            .accessibilityLabel(details.isEmpty ? summary.text : details.joined(separator: ", "))
-            .accessibilityHint(lang.t("ssh.monitor.title"))
         }
+    }
+
+    private func monitorHeaderChip(_ title: String, details: [String], action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: OpenedMonitorSummary.fontSize, weight: .semibold, design: .monospaced))
+                .foregroundStyle(details.isEmpty ? .white.opacity(0.7) : .cyan)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .padding(.horizontal, OpenedMonitorSummary.horizontalPadding)
+                .frame(minWidth: IslandChromeMetrics.openedHeaderControlsWidth)
+                .frame(height: Self.headerControlButtonSize)
+                .background(.white.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help((details + [lang.t("ssh.monitor.title")]).joined(separator: "\n"))
+        .accessibilityLabel(details.isEmpty ? title : details.joined(separator: ", "))
+        .accessibilityHint(lang.t("ssh.monitor.title"))
     }
 
     private var openedContent: some View {

@@ -6,15 +6,20 @@ struct NPUOpenedHeaderLayoutTests {
     @Test
     func monitorSummaryShowsCPUAndNPUAtTheSameTime() {
         let both = OpenedMonitorSummary(cpuUsage: [36, nil], npuUsage: (51, 72))
-        #expect(both.text == "CPU 36%/—% · NPU HBM51% AIC72%")
-        #expect(OpenedMonitorSummary(cpuUsage: [0], npuUsage: nil).text == "CPU 0%")
-        #expect(OpenedMonitorSummary(cpuUsage: [], npuUsage: (nil, nil)).text == "NPU HBM—% AIC—%")
-        #expect(OpenedMonitorSummary(cpuUsage: [], npuUsage: nil).text == "SSH")
+        #expect(both.cpuText == "CPU 36%/—%")
+        #expect(both.npuText == "NPU HBM51% AIC72%")
+        #expect(OpenedMonitorSummary(cpuUsage: [0], npuUsage: nil).cpuText == "CPU 0%")
+        #expect(OpenedMonitorSummary(cpuUsage: [0], npuUsage: nil).npuText == nil)
+        #expect(OpenedMonitorSummary(cpuUsage: [], npuUsage: (nil, nil)).npuText == "NPU HBM—% AIC—%")
+        #expect(OpenedMonitorSummary(cpuUsage: [], npuUsage: nil).cpuText == nil)
     }
 
     @Test
     func bothMonitorTypesFitTheExpandedNotchLanes() {
         let controlsWidth = OpenedMonitorSummary.requiredWidth(cpuHostCount: CPUCollector.aliases.count, showsNPU: true)
+        let cpuWidth = OpenedMonitorSummary.requiredWidth(cpuHostCount: CPUCollector.aliases.count, showsNPU: false)
+        let npuWidth = OpenedMonitorSummary.requiredWidth(cpuHostCount: 0, showsNPU: true)
+        #expect(controlsWidth == cpuWidth + OpenedMonitorSummary.chipSpacing + npuWidth)
         let notch: CGFloat = 224
         let width = IslandChromeMetrics.minimumNotchedOpenedWidth(notchWidth: notch, monitorHeaderWidth: controlsWidth)
         let visibleLane = (width - notch) / 2 - IslandChromeMetrics.notchHeaderHorizontalPadding
